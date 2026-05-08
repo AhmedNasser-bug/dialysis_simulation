@@ -1,0 +1,11 @@
+# Baseline research stack (adjust as needed)
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+dataclasses-json
+
+
+# Dev/test
+pytest
