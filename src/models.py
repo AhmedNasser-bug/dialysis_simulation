@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 
@@ -30,3 +30,34 @@ class ShiftScenario:
 
     scenario_seed: int
     """Seed used to generate this scenario (supports reproducibility)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ShiftStatistics:
+    """
+    Schema 'S' contract: Output statistics from processing a single shift.
+
+    This dataclass captures all performance metrics required for comparing
+    scheduling strategies under identical stochastic conditions.
+    """
+
+    strategy_name: str
+    """Name of the scheduling strategy that produced these statistics."""
+
+    total_patients_processed: int
+    """Total number of patients processed in this shift."""
+
+    mean_wait_time_minutes: float
+    """Mean wait time (in minutes) across all patients."""
+
+    max_wait_time_minutes: float
+    """Maximum wait time (in minutes) experienced by any patient."""
+
+    nurse_utilization_percent: float
+    """Average nurse utilization as a percentage [0, 100]."""
+
+    machine_utilization_percent: float
+    """Average machine utilization as a percentage [0, 100]."""
+
+    shift_overrun_minutes: int
+    """Minutes beyond the 300-minute shift mark required to clear the queue."""

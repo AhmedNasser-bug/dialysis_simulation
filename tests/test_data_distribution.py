@@ -4,8 +4,8 @@ from collections import Counter
 
 import pytest
 
-from dialysis_simulation.src.config import IntRange, SimulationConfig, UniformIntSampler
-from dialysis_simulation.src.scenario_generator import generate_shift_scenario
+from src.config import IntRange, SimulationConfig, UniformIntSampler
+from src.scenario_generator import generate_shift_scenario
 
 
 NUM_SCENARIOS = 10_000

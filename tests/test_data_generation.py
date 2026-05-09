@@ -1,9 +1,9 @@
 
 import pytest
 
-from dialysis_simulation.src.config import IntRange, SimulationConfig, UniformIntSampler
-from dialysis_simulation.src.models import ShiftScenario
-from dialysis_simulation.src.scenario_generator import generate_shift_scenario
+from src.config import IntRange, SimulationConfig, UniformIntSampler
+from src.models import ShiftScenario
+from src.scenario_generator import generate_shift_scenario
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 42, 123])
