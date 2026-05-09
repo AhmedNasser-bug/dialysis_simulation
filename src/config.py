@@ -56,7 +56,7 @@ class SimulationConfig:
 
     # 2) Stochastic resource ranges
     session_duration_minutes_range: IntRange = IntRange(240, 360)
-    total_machines: int = IntRange(15, 20)
+    total_machines: IntRange = IntRange(15, 20)
     patient_volume: IntRange = IntRange(15, 20)
     nurse_count: IntRange = IntRange(2, 4)
     machine_ready_delay_minutes: IntRange = IntRange(0, 90)
