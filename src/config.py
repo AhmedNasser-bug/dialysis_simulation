@@ -52,13 +52,13 @@ class SimulationConfig:
 
     # 1) Static temporal bounds
     shift_duration_minutes: int = 300
-    session_duration_minutes: int = 240
     machine_cooldown_minutes: int = 60
 
     # 2) Stochastic resource ranges
-    patient_volume: IntRange = IntRange(3, 5)
+    session_duration_minutes_range: IntRange = IntRange(240, 360)
+    total_machines: int = IntRange(15, 20)
+    patient_volume: IntRange = IntRange(15, 20)
     nurse_count: IntRange = IntRange(2, 4)
-    total_machines: int = 5
     machine_ready_delay_minutes: IntRange = IntRange(0, 90)
 
     # 3) Stochastic event generators (callables accept rng and return minutes)
@@ -79,12 +79,10 @@ class SimulationConfig:
     def validate(self) -> None:
         if self.shift_duration_minutes <= 0:
             raise ValueError("shift_duration_minutes must be > 0")
-        if self.session_duration_minutes <= 0:
-            raise ValueError("session_duration_minutes must be > 0")
+        if self.session_duration_minutes_range.low <= 0:
+            raise ValueError("session_duration_minutes_range.low must be > 0")
         if self.machine_cooldown_minutes < 0:
             raise ValueError("machine_cooldown_minutes must be >= 0")
-        if self.total_machines <= 0:
-            raise ValueError("total_machines must be > 0")
         if self.machine_ready_delay_minutes.low < 0 or self.machine_ready_delay_minutes.high < 0:
             raise ValueError("machine_ready_delay_minutes bounds must be >= 0")
         if self.machine_ready_delay_minutes.low > self.machine_ready_delay_minutes.high:
@@ -110,3 +108,6 @@ class SimulationConfig:
 
     def sample_machine_is_defective(self, rng: random.Random) -> bool:
         return rng.random() < self.machine_defect_probability
+
+    def sample_session_duration_minutes(self, rng: random.Random) -> int:
+        return self.session_duration_minutes_range.sample(rng)

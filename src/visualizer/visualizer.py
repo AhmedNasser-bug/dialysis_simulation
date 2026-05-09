@@ -6,7 +6,7 @@ Operates strictly against Schema 'S' interface.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List
 import matplotlib.pyplot as plt
 import matplotlib.figure as mpfig
 import pandas as pd
@@ -16,34 +16,14 @@ from src.models import ShiftStatistics
 
 
 class Visualizer:
-    """
-    Generates analytical plots from Monte Carlo simulation results.
-    
-    All plot methods return matplotlib Figure objects without calling plt.show(),
-    allowing callers to save or display as needed.
-    """
-    
     def plot_wait_distribution(
         self, 
         results: List[ShiftStatistics]
     ) -> mpfig.Figure:
-        """
-        Box plot of wait time metrics grouped by strategy.
-        
-        Shows distribution of mean_wait_time_minutes and max_wait_time_minutes
-        across all Monte Carlo iterations for each strategy.
-        
-        Args:
-            results: List of ShiftStatistics from MonteCarloBatcher.run().
-            
-        Returns:
-            Matplotlib Figure containing the box plot.
-        """
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
         
-        # Mean wait time boxplot
         sns.boxplot(
             data=df, 
             x="strategy_name", 
@@ -55,7 +35,6 @@ class Visualizer:
         axes[0].set_ylabel("Mean Wait Time (minutes)")
         axes[0].tick_params(axis='x', rotation=45)
         
-        # Max wait time boxplot
         sns.boxplot(
             data=df,
             x="strategy_name",
@@ -74,18 +53,8 @@ class Visualizer:
         self,
         results: List[ShiftStatistics]
     ) -> mpfig.Figure:
-        """
-        Grouped bar chart comparing nurse vs machine utilization by strategy.
-        
-        Args:
-            results: List of ShiftStatistics from MonteCarloBatcher.run().
-            
-        Returns:
-            Matplotlib Figure containing the utilization comparison.
-        """
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         
-        # Melt for grouped bar chart
         df_melted = df.melt(
             id_vars=["strategy_name"],
             value_vars=["nurse_utilization_percent", "machine_utilization_percent"],
@@ -93,7 +62,6 @@ class Visualizer:
             value_name="utilization_percent"
         )
         
-        # Clean up labels
         df_melted["resource_type"] = df_melted["resource_type"].map({
             "nurse_utilization_percent": "Nurse",
             "machine_utilization_percent": "Machine"
@@ -111,8 +79,8 @@ class Visualizer:
         
         ax.set_title("Resource Utilization by Strategy")
         ax.set_xlabel("Strategy")
-        ax.set_ylabel("Utilization (%)")
-        ax.set_ylim(0, 100)
+        ax.set_ylabel("Utilization (fraction)")
+        ax.set_ylim(0, 1.0)
         ax.tick_params(axis='x', rotation=45)
         ax.legend(title="Resource Type")
         
@@ -123,18 +91,6 @@ class Visualizer:
         self,
         results: List[ShiftStatistics]
     ) -> mpfig.Figure:
-        """
-        Histogram of shift overrun minutes by strategy.
-        
-        Shows the distribution of extra time required beyond the 300-minute
-        shift to complete all patient sessions.
-        
-        Args:
-            results: List of ShiftStatistics from MonteCarloBatcher.run().
-            
-        Returns:
-            Matplotlib Figure containing the histogram.
-        """
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -154,7 +110,7 @@ class Visualizer:
             )
         
         ax.set_title("Shift Overrun Distribution")
-        ax.set_xlabel("Overrun Minutes (beyond 300 min shift)")
+        ax.set_xlabel("Overrun Minutes")
         ax.set_ylabel("Frequency")
         ax.legend(title="Strategy")
         
@@ -165,21 +121,6 @@ class Visualizer:
         self,
         results: List[ShiftStatistics]
     ) -> mpfig.Figure:
-        """
-        Paired-difference plot with 95% confidence intervals.
-        
-        Computes per-scenario deltas between strategies and displays
-        mean difference with confidence intervals.
-        
-        Args:
-            results: List of ShiftStatistics from MonteCarloBatcher.run().
-            
-        Returns:
-            Matplotlib Figure containing the paired difference plot.
-            
-        Raises:
-            ValueError: If fewer than 2 distinct strategies are present.
-        """
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         strategies = df["strategy_name"].unique()
         
@@ -189,11 +130,6 @@ class Visualizer:
                 f"found: {list(strategies)}"
             )
         
-        # For paired analysis, we need to pair by iteration
-        # Assuming results are ordered: [iter0_stratA, iter0_stratB, iter1_stratA, ...]
-        n_iterations = len(results) // len(strategies)
-        
-        # Pivot to get paired data
         pivot_df = df.pivot_table(
             index=df.index // len(strategies),
             columns="strategy_name",
@@ -201,7 +137,6 @@ class Visualizer:
             aggfunc='first'
         )
         
-        # Calculate differences (FIFO - FIXED, or first two strategies)
         strat_names = sorted(pivot_df.columns)
         if len(strat_names) >= 2:
             diff_col = f"{strat_names[0]}_minus_{strat_names[1]}"
@@ -214,7 +149,6 @@ class Visualizer:
             
             fig, ax = plt.subplots(figsize=(8, 6))
             
-            # Plot mean difference with CI
             ax.errorbar(
                 [diff_col],
                 [mean_diff],
@@ -238,9 +172,44 @@ class Visualizer:
         
         raise ValueError("Could not compute paired differences")
     
+    def plot_metric_over_iterations(
+        self,
+        results: List[ShiftStatistics],
+        metric_column: str,
+        title: str,
+        ylabel: str
+    ) -> mpfig.Figure:
+        """
+        Line plot showing a specific metric across all iterations for each strategy.
+        """
+        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        strategies = df["strategy_name"].unique()
+        
+        # Calculate iteration index
+        df["iteration"] = df.index // len(strategies)
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        sns.lineplot(
+            data=df,
+            x="iteration",
+            y=metric_column,
+            hue="strategy_name",
+            marker='o',
+            alpha=0.7,
+            ax=ax
+        )
+        
+        ax.set_title(title)
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        return fig
+    
     @staticmethod
     def _stats_to_dict(stats: ShiftStatistics) -> dict:
-        """Convert ShiftStatistics to dictionary for DataFrame conversion."""
         return {
             "strategy_name": stats.strategy_name,
             "total_patients_processed": stats.total_patients_processed,
@@ -249,4 +218,5 @@ class Visualizer:
             "nurse_utilization_percent": stats.nurse_utilization_percent,
             "machine_utilization_percent": stats.machine_utilization_percent,
             "shift_overrun_minutes": stats.shift_overrun_minutes,
+            "failed_patients_count": stats.failed_patients_count,
         }

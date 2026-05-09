@@ -20,8 +20,8 @@ from dataclasses import dataclass
 import random
 from typing import Dict, List
 
-from .config import SimulationConfig
-from .models import ShiftScenario
+from src.config import SimulationConfig
+from src.models import ShiftScenario
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,10 +75,16 @@ def generate_shift_scenario(
     for patient_id in range(1, patient_count + 1):
         arrival_min = config.sample_arrival_minute(rng)
         setup_min = config.sample_setup_duration_minutes(rng)
-        patient_arrivals.append({"id": patient_id, "arrival_min": arrival_min, "setup_min": setup_min})
+        session_min = config.sample_session_duration_minutes(rng)
+        patient_arrivals.append({
+            "id": patient_id, 
+            "arrival_min": arrival_min, 
+            "setup_min": setup_min,
+            "session_min": session_min
+        })
 
     # Machines: readiness delays + pre-shift binary defect test at T=0.
-    total_machines = config.total_machines
+    total_machines = config.total_machines.sample(rng)
 
     machines: List[MachineModel] = []
     for machine_id in range(1, total_machines + 1):
@@ -99,7 +105,6 @@ def generate_shift_scenario(
         machine_ready_times=machine_ready_times,
         defective_machine_ids=defective_machine_ids,
         scenario_seed=seed,
-        session_duration_minutes=config.session_duration_minutes,
         machine_cooldown_minutes=config.machine_cooldown_minutes,
         shift_end_minutes=config.shift_duration_minutes,
     )

@@ -31,9 +31,6 @@ class ShiftScenario:
     scenario_seed: int
     """Seed used to generate this scenario (supports reproducibility)."""
 
-    session_duration_minutes: int
-    """Duration of each dialysis session in minutes."""
-
     machine_cooldown_minutes: int
     """Cooldown period after session completion in minutes."""
 
@@ -70,3 +67,6 @@ class ShiftStatistics:
 
     shift_overrun_minutes: int
     """Minutes beyond the 300-minute shift mark required to clear the queue."""
+
+    failed_patients_count: int = 0
+    """Number of patients who could not be served due to resource exhaustion."""
