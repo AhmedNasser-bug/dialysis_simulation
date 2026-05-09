@@ -3,7 +3,7 @@ import pytest
 
 from src.config import IntRange, SimulationConfig, UniformIntSampler
 from src.models import ShiftScenario
-from src.scenario_generator import generate_shift_scenario
+from src.scenario.generator import generate_shift_scenario
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2, 42, 123])
@@ -38,7 +38,7 @@ def test_arrival_times(arrival_window_max: int, seed: int) -> None:
 def test_machine_readiness(max_machine_ready_delay: int, seed: int) -> None:
     cfg = SimulationConfig(
         machine_defect_probability=0.0,
-        total_machines=5,
+        total_machines=IntRange(5, 5),
         machine_ready_delay_minutes=IntRange(0, max_machine_ready_delay),
     )
     scenario = generate_shift_scenario(cfg, seed=seed)
@@ -56,7 +56,7 @@ def test_defect_logic() -> None:
 
     cfg_all_defect = SimulationConfig(
         machine_defect_probability=1.0,
-        total_machines=total_machines,
+        total_machines=IntRange(total_machines, total_machines),
     )
     scenario_all_defect = generate_shift_scenario(cfg_all_defect, seed=seed)
 
@@ -65,7 +65,7 @@ def test_defect_logic() -> None:
 
     cfg_no_defect = SimulationConfig(
         machine_defect_probability=0.0,
-        total_machines=total_machines,
+        total_machines=IntRange(total_machines, total_machines),
     )
     scenario_no_defect = generate_shift_scenario(cfg_no_defect, seed=seed)
 
@@ -89,7 +89,7 @@ def test_schema_integrity() -> None:
 
     # Patient arrival rows contain expected keys
     for row in scenario.patient_arrivals:
-        assert set(row.keys()) == {"id", "arrival_min", "setup_min"}
+        assert set(row.keys()) == {"id", "arrival_min", "setup_min", "session_min"}
         assert isinstance(row["id"], int)
         assert isinstance(row["arrival_min"], int)
         assert isinstance(row["setup_min"], int)

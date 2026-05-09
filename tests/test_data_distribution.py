@@ -5,7 +5,7 @@ from collections import Counter
 import pytest
 
 from src.config import IntRange, SimulationConfig, UniformIntSampler
-from src.scenario_generator import generate_shift_scenario
+from src.scenario.generator import generate_shift_scenario
 
 
 NUM_SCENARIOS = 10_000
@@ -19,11 +19,11 @@ def test_machine_defect_rate_converges_over_10000_scenarios() -> None:
 
     cfg = SimulationConfig(
         machine_defect_probability=0.15,
-        total_machines=8,
+        total_machines=IntRange(8, 8),
     )
 
     defective_count = 0
-    total_machine_observations = NUM_SCENARIOS * cfg.total_machines
+    total_machine_observations = NUM_SCENARIOS * cfg.total_machines.high
 
     for seed in range(NUM_SCENARIOS):
         scenario = generate_shift_scenario(cfg, seed=seed)
@@ -56,9 +56,9 @@ def test_defect_probability_extremes(defect_probability: float) -> None:
 
     cfg = SimulationConfig(
         machine_defect_probability=defect_probability,
-        total_machines=6,
+        total_machines=IntRange(6, 6),
     )
-    expected_defective = 0 if defect_probability == 0.0 else cfg.total_machines
+    expected_defective = 0 if defect_probability == 0.0 else cfg.total_machines.high
 
     for seed in range(1_000):
         scenario = generate_shift_scenario(cfg, seed=seed)
