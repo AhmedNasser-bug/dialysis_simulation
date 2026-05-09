@@ -99,4 +99,7 @@ def generate_shift_scenario(
         machine_ready_times=machine_ready_times,
         defective_machine_ids=defective_machine_ids,
         scenario_seed=seed,
+        session_duration_minutes=config.session_duration_minutes,
+        machine_cooldown_minutes=config.machine_cooldown_minutes,
+        shift_end_minutes=config.shift_duration_minutes,
     )
