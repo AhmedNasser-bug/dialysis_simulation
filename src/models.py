@@ -31,6 +31,15 @@ class ShiftScenario:
     scenario_seed: int
     """Seed used to generate this scenario (supports reproducibility)."""
 
+    session_duration_minutes: int
+    """Duration of each dialysis session in minutes."""
+
+    machine_cooldown_minutes: int
+    """Cooldown period after session completion in minutes."""
+
+    shift_end_minutes: int
+    """Official shift end time in minutes."""
+
 
 @dataclass(frozen=True, slots=True)
 class ShiftStatistics:

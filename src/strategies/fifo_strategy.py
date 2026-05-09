@@ -1,37 +1,25 @@
 from __future__ import annotations
 
-import heapq
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from src.models import ShiftScenario, ShiftStatistics
 from src.strategies.base_strategy import SchedulingStrategy
-
-
-@dataclass
-class _MachineState:
-    """Internal state tracker for a machine."""
-    id: int
-    ready_time: int
-    busy_until: int = 0  # Machine locked until this time (setup + session + cooldown)
-
-
-@dataclass
-class _NurseState:
-    """Internal state tracker for a nurse."""
-    id: int
-    busy_until: int = 0  # Nurse busy only during setup time
-
-
-@dataclass
-class _PatientSession:
-    """Tracks a patient's session timing."""
-    patient_id: int
-    arrival_time: int
-    setup_duration: int
-    session_start: int = 0
-    session_end: int = 0
-    wait_time: float = 0.0
+from src.strategies.utils import (
+    MachineState,
+    NurseState,
+    PatientSession,
+    MAX_TIME_SAFETY_LIMIT,
+    initialize_machine_states,
+    initialize_nurse_states,
+    find_earliest_nurse_availability,
+    calculate_session_end,
+    calculate_machine_busy_until,
+    calculate_wait_time,
+    calculate_nurse_utilization,
+    calculate_machine_utilization,
+    aggregate_wait_statistics,
+    aggregate_overrun_statistics,
+)
 
 
 class FIFOStrategy(SchedulingStrategy):
@@ -45,58 +33,52 @@ class FIFOStrategy(SchedulingStrategy):
     - Nurse is released after setup_time; machine is locked for setup + session + cooldown
     """
 
-    SESSION_DURATION = 240
-    COOLDOWN_DURATION = 60
-    SHIFT_END = 300
-
     @property
     def name(self) -> str:
         return "FIFO"
 
     def process_shift(self, scenario: ShiftScenario) -> ShiftStatistics:
         # Initialize machine states (excluding defective machines from availability)
-        machines: Dict[int, _MachineState] = {}
-        for mid, ready_time in scenario.machine_ready_times.items():
-            if mid not in scenario.defective_machine_ids:
-                machines[mid] = _MachineState(id=mid, ready_time=ready_time)
+        machines: Dict[int, MachineState] = initialize_machine_states(scenario)
 
         # Initialize nurse states
-        nurses: List[_NurseState] = [
-            _NurseState(id=i) for i in range(scenario.nurse_count)
-        ]
+        nurses: List[NurseState] = initialize_nurse_states(scenario.nurse_count)
 
         # Create patient sessions sorted by arrival time (FIFO order)
-        patients: List[_PatientSession] = []
+        patients: List[PatientSession] = []
         for p in sorted(scenario.patient_arrivals, key=lambda x: x["arrival_min"]):
-            patients.append(_PatientSession(
+            patients.append(PatientSession(
                 patient_id=p["id"],
                 arrival_time=p["arrival_min"],
                 setup_duration=p["setup_min"]
             ))
 
-        max_time = 0
-
         # Process each patient in FIFO order
         for patient in patients:
             # Find earliest time when any machine and any nurse are both available
-            earliest_start, assigned_machine = self._find_earliest_start_fifo(
+            earliest_start, assigned_machine_id = self._find_earliest_start_fifo(
                 patient, machines, nurses
             )
 
-            if earliest_start is None or assigned_machine is None:
+            if earliest_start is None or assigned_machine_id is None:
                 # No resources available - extreme wait (shouldn't happen with valid config)
                 patient.wait_time = float('inf')
-                patient.session_start = float('inf')
-                patient.session_end = float('inf')
+                patient.session_start = int(MAX_TIME_SAFETY_LIMIT)
+                patient.session_end = int(MAX_TIME_SAFETY_LIMIT)
                 continue
 
             patient.session_start = earliest_start
-            patient.wait_time = max(0, earliest_start - patient.arrival_time)
-            patient.session_end = earliest_start + patient.setup_duration + self.SESSION_DURATION
+            patient.wait_time = calculate_wait_time(patient.arrival_time, earliest_start)
+            patient.session_end = calculate_session_end(
+                earliest_start,
+                patient.setup_duration,
+                scenario.session_duration_minutes
+            )
 
             # Update machine state: locked for setup + session + cooldown
-            machines[assigned_machine].busy_until = (
-                patient.session_end + self.COOLDOWN_DURATION
+            machines[assigned_machine_id].busy_until = calculate_machine_busy_until(
+                patient.session_end,
+                scenario.machine_cooldown_minutes
             )
 
             # Update nurse state: only busy during setup
@@ -104,29 +86,17 @@ class FIFOStrategy(SchedulingStrategy):
             if nurse is not None:
                 nurse.busy_until = earliest_start + patient.setup_duration
 
-            # Track max time for utilization calculation
-            max_time = max(max_time, patient.session_end)
+        # Calculate statistics using utility functions
+        mean_wait, max_wait = aggregate_wait_statistics(patients)
+        shift_overrun = aggregate_overrun_statistics(patients, scenario.shift_end_minutes)
+        max_time = max(p.session_end for p in patients if p.session_end < float('inf')) if patients else 0
 
-        # Calculate statistics
-        wait_times = [p.wait_time for p in patients if p.wait_time < float('inf')]
-        if wait_times:
-            mean_wait = sum(wait_times) / len(wait_times)
-            max_wait = max(wait_times)
-        else:
-            mean_wait = 0.0
-            max_wait = 0.0
-
-        # Calculate overrun
-        shift_overrun = 0
-        for patient in patients:
-            if patient.session_end < float('inf'):
-                overrun = int(patient.session_end - self.SHIFT_END)
-                if overrun > 0:
-                    shift_overrun = max(shift_overrun, overrun)
-
-        # Calculate utilizations (as percentages)
-        nurse_util, machine_util = self._calculate_utilization(
-            patients, machines, nurses, scenario.nurse_count, max_time
+        nurse_util = calculate_nurse_utilization(patients, scenario.nurse_count, max_time)
+        machine_util = calculate_machine_utilization(
+            patients,
+            len(machines),
+            max_time,
+            scenario.session_duration_minutes
         )
 
         return ShiftStatistics(
@@ -141,9 +111,9 @@ class FIFOStrategy(SchedulingStrategy):
 
     def _find_earliest_start_fifo(
         self,
-        patient: _PatientSession,
-        machines: Dict[int, _MachineState],
-        nurses: List[_NurseState]
+        patient: PatientSession,
+        machines: Dict[int, MachineState],
+        nurses: List[NurseState]
     ) -> Tuple[Optional[int], Optional[int]]:
         """
         Find earliest time when any machine and any nurse are both available.
@@ -186,48 +156,16 @@ class FIFOStrategy(SchedulingStrategy):
                 current_time = earliest_nurse
 
                 # Safety limit
-                if current_time > 1000000:
+                if current_time > MAX_TIME_SAFETY_LIMIT:
                     break
 
         return None, None
 
     def _get_available_nurse(
-        self, nurses: List[_NurseState], at_time: int
-    ) -> Optional[_NurseState]:
+        self, nurses: List[NurseState], at_time: int
+    ) -> Optional[NurseState]:
         """Get a nurse that is available at the given time."""
         for nurse in nurses:
             if nurse.busy_until <= at_time:
                 return nurse
         return None
-
-    def _calculate_utilization(
-        self,
-        patients: List[_PatientSession],
-        machines: Dict[int, _MachineState],
-        nurses: List[_NurseState],
-        nurse_count: int,
-        max_time: int
-    ) -> Tuple[float, float]:
-        """Calculate nurse and machine utilization."""
-        if max_time <= 0 or max_time == float('inf'):
-            return 0.0, 0.0
-
-        # Nurse utilization: total setup time / (nurse_count * max_time)
-        total_setup_time = sum(
-            p.setup_duration for p in patients if p.session_start < float('inf')
-        )
-        nurse_util = total_setup_time / (nurse_count * max_time) if max_time > 0 else 0.0
-
-        # Machine utilization: total session time / (num_machines * max_time)
-        total_session_time = sum(
-            self.SESSION_DURATION for p in patients
-            if p.session_start < float('inf')
-        )
-        num_machines = len(machines)
-        machine_util = (
-            total_session_time / (num_machines * max_time)
-            if max_time > 0 and num_machines > 0
-            else 0.0
-        )
-
-        return min(1.0, nurse_util), min(1.0, machine_util)
