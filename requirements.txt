@@ -9,3 +9,5 @@ dataclasses-json
 
 # Dev/test
 pytest
+
+fpdf2
