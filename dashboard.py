@@ -1,4 +1,5 @@
 import streamlit as st
+import os
 import random
 import pandas as pd
 from typing import List
@@ -47,7 +48,7 @@ if st.sidebar.button("▶ Run Simulation", type="primary"):
         st.error("Please select at least one strategy.")
         st.stop()
         
-    with st.spinner("Running Monte Carlo simulation..."):
+    with st.spinner("Running Monte Carlo simulation and Edge Cases..."):
         # Build config
         config = SimulationConfig(
             patient_volume=IntRange(patient_vol_min, patient_vol_max),
@@ -78,8 +79,22 @@ if st.sidebar.button("▶ Run Simulation", type="primary"):
         )
         
         results = batcher.run()
+        edge_cases = batcher.edge_case_run()
         
-    st.success(f"Simulation completed: {len(results)} runs ({n_iterations} iterations × {len(strategies)} strategies)")
+        st.session_state['results'] = results
+        st.session_state['edge_cases'] = edge_cases
+        st.session_state['config'] = config
+        st.session_state['n_iterations'] = n_iterations
+        st.session_state['strategies'] = strategies
+        
+    st.success(f"Simulation completed: {len(results)} runs ({n_iterations} iterations × {len(strategies)} strategies) + Edge Cases")
+
+if 'results' in st.session_state:
+    results = st.session_state['results']
+    edge_cases = st.session_state['edge_cases']
+    config = st.session_state['config']
+    n_iterations = st.session_state['n_iterations']
+    strategies = st.session_state['strategies']
     
     # Overview Metrics
     st.subheader("Key Performance Indicators (Aggregated Averages)")
@@ -166,6 +181,49 @@ if st.sidebar.button("▶ Run Simulation", type="primary"):
             "Overrun (min)"
         )
         st.pyplot(fig_overrun_iter)
+
+    st.divider()
+    st.subheader("PDF Reports")
+    st.markdown("Generate comprehensive PDF reports covering the configuration, isolated strategy charts, comparative graphics, and edge-case behaviors.")
+    
+    from src.reporter.pdf_reporter import generate_individual_report, generate_global_comparison_report
+    import tempfile
+    
+    report_cols = st.columns(2)
+    
+    with report_cols[0]:
+        st.markdown("##### Individual Strategy Reports")
+        strat_to_report = st.selectbox("Select Strategy", options=strategies)
+        if st.button(f"Generate {strat_to_report} Report"):
+            with st.spinner(f"Generating PDF for {strat_to_report}..."):
+                fd, path = tempfile.mkstemp(suffix=".pdf")
+                os.close(fd)
+                generate_individual_report(strat_to_report, results, edge_cases, config, n_iterations, path)
+                with open(path, "rb") as f:
+                    pdf_bytes = f.read()
+                st.download_button(
+                    label=f"📥 Download {strat_to_report} Report",
+                    data=pdf_bytes,
+                    file_name=f"dialysis_report_{strat_to_report}.pdf",
+                    mime="application/pdf"
+                )
+                
+    with report_cols[1]:
+        st.markdown("##### Global Comparison Report")
+        st.markdown("Generates a combined document with all strategies and comparative metrics.")
+        if st.button("Generate Global Report", type="primary"):
+            with st.spinner("Generating Global PDF Report..."):
+                fd, path = tempfile.mkstemp(suffix=".pdf")
+                os.close(fd)
+                generate_global_comparison_report(results, edge_cases, config, n_iterations, path)
+                with open(path, "rb") as f:
+                    pdf_bytes = f.read()
+                st.download_button(
+                    label="📥 Download Global Comparison Report",
+                    data=pdf_bytes,
+                    file_name="dialysis_global_comparison_report.pdf",
+                    mime="application/pdf"
+                )
 
 else:
     st.info("Adjust settings in the sidebar and click 'Run Simulation' to begin.")

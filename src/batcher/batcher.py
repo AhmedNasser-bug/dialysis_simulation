@@ -42,3 +42,17 @@ class MonteCarloBatcher:
                 results.append(stats)
 
         return results
+
+    def edge_case_run(self) -> Dict[str, List[ShiftStatistics]]:
+        from src.scenario.edge_cases import get_all_edge_cases
+        edge_cases = get_all_edge_cases(self._config)
+        
+        results: Dict[str, List[ShiftStatistics]] = {}
+        for name, scenario in edge_cases.items():
+            case_results = []
+            for strategy in self._strategies:
+                stats = strategy.process_shift(scenario)
+                case_results.append(stats)
+            results[name] = case_results
+            
+        return results

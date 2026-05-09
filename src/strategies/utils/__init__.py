@@ -50,7 +50,8 @@ def initialize_machine_states(scenario: ShiftScenario) -> Dict[int, MachineState
     machines: Dict[int, MachineState] = {}
     for mid, ready_time in scenario.machine_ready_times.items():
         if mid not in scenario.defective_machine_ids:
-            machines[mid] = MachineState(id=mid, ready_time=ready_time)
+            # The machine is effectively "busy" (unavailable) until its ready_time
+            machines[mid] = MachineState(id=mid, ready_time=ready_time, busy_until=ready_time)
     return machines
 
 
