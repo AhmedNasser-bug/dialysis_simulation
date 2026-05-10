@@ -1,7 +1,7 @@
 import os
 import tempfile
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Tuple, Optional
 
 import pandas as pd
 import numpy as np
@@ -9,7 +9,7 @@ from fpdf import FPDF
 import matplotlib.pyplot as plt
 
 from src.config import SimulationConfig
-from src.models import ShiftStatistics
+from src.models import ShiftScenario, ShiftStatistics
 from src.visualizer.visualizer import Visualizer
 
 # ─── Design tokens ────────────────────────────────────────────────────────────
@@ -415,15 +415,80 @@ class PDFReporter(FPDF):
 
     # ─── Edge case section ────────────────────────────────────────────────────
 
-    def write_edge_cases(self, edge_case_results: Dict[str, List[ShiftStatistics]], strategy_name: str = None):
+    def write_edge_cases(
+        self,
+        edge_case_bundle: Dict[str, Tuple[ShiftScenario, List[ShiftStatistics]]],
+        strategy_name: Optional[str] = None,
+    ):
+        """
+        Render each edge case with a full shift snapshot + per-strategy results.
+
+        Parameters
+        ----------
+        edge_case_bundle : dict
+            ``{case_name: (ShiftScenario, [ShiftStatistics])}``
+        strategy_name : str | None
+            If set, only render results for that strategy.
+        """
         self._section_rule("Edge-Case Stress Tests")
         self.chapter_body(
-            "Performance under extreme, deterministic boundary conditions designed "
-            "to expose failure modes not visible in the central Monte Carlo distribution."
+            "Performance under extreme or auto-captured boundary conditions. "
+            "Each card shows the full shift snapshot followed by per-strategy outcomes."
         )
 
-        for case_name, stats_list in edge_case_results.items():
+        for case_name, (scenario, stats_list) in edge_case_bundle.items():
             self.subsection_title(f"Scenario: {case_name}")
+
+            # ── Shift Snapshot block ──────────────────────────────────────────
+            n_machines   = len(scenario.machine_ready_times)
+            n_defective  = len(scenario.defective_machine_ids)
+            n_active     = n_machines  # machine_ready_times only contains non-defective
+            n_patients   = len(scenario.patient_arrivals)
+
+            # Arrival range
+            arrivals_min_vals = [p["arrival_min"] for p in scenario.patient_arrivals]
+            arr_lo = min(arrivals_min_vals) if arrivals_min_vals else 0
+            arr_hi = max(arrivals_min_vals) if arrivals_min_vals else 0
+
+            snap_rows = [
+                ("Active machines",  str(n_active)),
+                ("Defective machines", str(n_defective)),
+                ("Total machines",    str(n_active + n_defective)),
+                ("Nurses",           str(scenario.nurse_count)),
+                ("Patients",         str(n_patients)),
+                ("Arrival window",   f"{arr_lo} - {arr_hi} min"),
+                ("Shift duration",   f"{scenario.shift_end_minutes} min"),
+                ("Min viable session", f"{scenario.min_session_duration_minutes} min"),
+                ("Machine cooldown",  f"{scenario.machine_cooldown_minutes} min"),
+                ("Scenario seed",     str(scenario.scenario_seed)),
+            ]
+
+            # Table header
+            self.set_fill_color(*C_TH_BG)
+            self.set_text_color(*C_TH_TEXT)
+            self.set_font("Arial", "B", 8)
+            self.set_x(MARGIN_L)
+            self.cell(BODY_W, 6, "  Shift Snapshot", ln=1, fill=True)
+
+            # Two-column layout for snapshot fields
+            col_w = BODY_W / 2
+            for idx, (label, value) in enumerate(snap_rows):
+                bg = C_ROW_A if idx % 2 == 0 else C_ROW_B
+                self.set_fill_color(*bg)
+                self.set_text_color(*C_TEXT)
+                self.set_font("Arial", "", 8)
+                self.set_x(MARGIN_L)
+                self.cell(col_w * 0.55, 5.5, f"  {label}", fill=True)
+                self.cell(col_w * 0.45, 5.5, value, fill=True, ln=(1 if True else 0))
+
+            self.ln(2)
+
+            # ── Per-strategy results ──────────────────────────────────────────
+            self.set_fill_color(*C_TH_BG)
+            self.set_text_color(*C_TH_TEXT)
+            self.set_font("Arial", "B", 8)
+            self.set_x(MARGIN_L)
+            self.cell(BODY_W, 6, "  Strategy Results", ln=1, fill=True)
 
             for stat in stats_list:
                 if strategy_name and stat.strategy_name != strategy_name:
@@ -432,25 +497,35 @@ class PDFReporter(FPDF):
                 failed = stat.failed_patients_count > 0
                 bg     = C_FAIL_BG   if failed else C_PASS_BG
                 fg     = C_FAIL_TEXT if failed else C_PASS_TEXT
+                badge  = "[FAIL]" if failed else "[PASS]"
 
                 self.set_fill_color(*bg)
                 self.set_text_color(*fg)
                 self.set_font("Arial", "B" if failed else "", 8.5)
+                self.set_x(MARGIN_L)
 
-                badge  = "[FAIL]\" if failed else \"[PASS]"
-                body   = (
-                    f"  {badge}   Strategy: {stat.strategy_name}   |   "
-                    f"Wait (mean / max): {stat.mean_wait_time_minutes:.1f} / "
+                line1 = (
+                    f"  {badge}  {stat.strategy_name}   |   "
+                    f"Patients: {stat.total_patients_processed}   |   "
+                    f"Failed: {stat.failed_patients_count}   |   "
+                    f"Truncated: {stat.sessions_truncated_count}"
+                )
+                self.cell(BODY_W, 7, line1, ln=1, fill=True)
+
+                self.set_fill_color(*bg)
+                self.set_font("Arial", "", 8)
+                self.set_x(MARGIN_L)
+                line2 = (
+                    f"        Wait (mean/max): {stat.mean_wait_time_minutes:.1f} / "
                     f"{stat.max_wait_time_minutes:.1f} min   |   "
                     f"Avg session: {stat.avg_session_time_minutes:.0f} min   |   "
-                    f"Truncated: {stat.sessions_truncated_count}   |   "
-                    f"Failed patients: {stat.failed_patients_count}"
+                    f"Nurse util: {stat.nurse_utilization_percent*100:.1f}%   |   "
+                    f"Machine util: {stat.machine_utilization_percent*100:.1f}%"
                 )
-                self.set_x(MARGIN_L)
-                self.cell(BODY_W, 8, body, ln=1, fill=True)
+                self.cell(BODY_W, 6, line2, ln=1, fill=True)
 
             self.set_text_color(*C_TEXT)
-            self.ln(3)
+            self.ln(4)
 
     # ─── Plot helper ──────────────────────────────────────────────────────────
 

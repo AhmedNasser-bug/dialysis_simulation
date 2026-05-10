@@ -2,9 +2,10 @@ import streamlit as st
 import os
 import json
 import pandas as pd
-from typing import List
+from typing import List, Dict, Tuple
 
 from src.config import SimulationConfig, IntRange, UniformIntSampler
+from src.models import ShiftScenario, ShiftStatistics
 from src.batcher.batcher import MonteCarloBatcher
 from src.visualizer.visualizer import Visualizer
 from presets_manager import list_presets, save_preset, load_preset, delete_preset
@@ -15,28 +16,26 @@ st.set_page_config(
     layout="wide"
 )
 
-# ─── Preset key → (default_value) mapping ────────────────────────────────────
+# ─── Defaults & helpers ───────────────────────────────────────────────────────
 _DEFAULTS: dict = {
-    "strategies":       ["FIFO", "FIXED"],
-    "n_iterations":     100,
-    "global_seed":      42,
-    "patient_vol":      (15, 20),
-    "arrival_range":    (0, 60),
-    "setup_range":      (10, 20),
-    "session_range":    (210, 240),
-    "min_session":      180,
-    "machine_count":    (15, 20),
-    "machine_ready":    (0, 90),
-    "defect_chance":    0.15,
-    "nurse_count":      (2, 4),
+    "strategies":    ["FIFO", "FIXED"],
+    "n_iterations":  100,
+    "global_seed":   42,
+    "patient_vol":   (15, 20),
+    "arrival_range": (0, 60),
+    "setup_range":   (10, 20),
+    "session_range": (210, 240),
+    "min_session":   180,
+    "machine_count": (15, 20),
+    "machine_ready": (0, 90),
+    "defect_chance": 0.15,
+    "nurse_count":   (2, 4),
 }
 
 def _get(key):
-    """Return session_state value if set (by preset loader), else the default."""
     return st.session_state.get(f"cfg_{key}", _DEFAULTS[key])
 
 def _collect_config_dict() -> dict:
-    """Snapshot all current widget values into a JSON-serialisable dict."""
     return {
         "strategies":    st.session_state.get("cfg_strategies",    _DEFAULTS["strategies"]),
         "n_iterations":  st.session_state.get("cfg_n_iterations",  _DEFAULTS["n_iterations"]),
@@ -53,7 +52,6 @@ def _collect_config_dict() -> dict:
     }
 
 def _apply_preset(data: dict) -> None:
-    """Write preset values into session_state so widgets pick them up on rerun."""
     mapping = {
         "strategies":    ("cfg_strategies",    lambda v: v),
         "n_iterations":  ("cfg_n_iterations",  int),
@@ -72,33 +70,140 @@ def _apply_preset(data: dict) -> None:
         if key in data:
             st.session_state[sk] = cast(data[key])
 
-# ─── Page header ─────────────────────────────────────────────────────────────
+# ─── Edge case detail card ────────────────────────────────────────────────────
+def render_edge_case_card(
+    case_name: str,
+    scenario: ShiftScenario,
+    stats_list: List[ShiftStatistics],
+    strategy_filter: str = None,
+):
+    """Render one edge-case expandable card with full shift snapshot + results."""
+    n_active    = len(scenario.machine_ready_times)
+    n_defective = len(scenario.defective_machine_ids)
+    n_patients  = len(scenario.patient_arrivals)
+    arrivals    = [p["arrival_min"] for p in scenario.patient_arrivals]
+    arr_lo, arr_hi = (min(arrivals), max(arrivals)) if arrivals else (0, 0)
+
+    # Aggregate failure status for title badge
+    filtered = [s for s in stats_list if not strategy_filter or s.strategy_name == strategy_filter]
+    any_failed = any(s.failed_patients_count > 0 for s in filtered)
+    badge = "🔴" if any_failed else "🟢"
+
+    with st.expander(f"{badge} {case_name}", expanded=any_failed):
+        snap_col, res_col = st.columns([1, 2])
+
+        with snap_col:
+            st.markdown("**📋 Shift Snapshot**")
+            snap_data = {
+                "Field": [
+                    "Active machines", "Defective machines", "Total machines",
+                    "Nurses", "Patients",
+                    "Arrival window", "Shift duration",
+                    "Min viable session", "Machine cooldown",
+                    "Seed",
+                ],
+                "Value": [
+                    n_active, n_defective, n_active + n_defective,
+                    scenario.nurse_count, n_patients,
+                    f"{arr_lo}–{arr_hi} min",
+                    f"{scenario.shift_end_minutes} min",
+                    f"{scenario.min_session_duration_minutes} min",
+                    f"{scenario.machine_cooldown_minutes} min",
+                    scenario.scenario_seed,
+                ],
+            }
+            st.dataframe(
+                pd.DataFrame(snap_data).set_index("Field"),
+                use_container_width=True,
+                height=360,
+            )
+
+            # Show defective machine IDs if any
+            if scenario.defective_machine_ids:
+                st.caption(f"Defective machine IDs: {sorted(scenario.defective_machine_ids)}")
+
+            # Machine readiness delays
+            delays = {
+                mid: rt for mid, rt in scenario.machine_ready_times.items() if rt > 0
+            }
+            if delays:
+                st.caption(f"Delayed machines: { {k: f'{v} min' for k, v in sorted(delays.items())} }")
+
+        with res_col:
+            st.markdown("**📊 Strategy Results**")
+            for stat in filtered:
+                failed = stat.failed_patients_count > 0
+                color  = "#fff5f5" if failed else "#f0fff4"
+                border = "#fc8181" if failed else "#68d391"
+                icon   = "❌ FAIL" if failed else "✅ PASS"
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        background:{color};border-left:4px solid {border};
+                        border-radius:6px;padding:10px 14px;margin-bottom:10px;
+                    ">
+                        <b>{icon} &nbsp; {stat.strategy_name}</b><br>
+                        <table style="width:100%;font-size:0.85em;margin-top:6px;border-collapse:collapse;">
+                            <tr>
+                                <td style="padding:2px 8px 2px 0"><b>Patients processed</b></td>
+                                <td style="padding:2px 0">{stat.total_patients_processed}</td>
+                                <td style="padding:2px 8px 2px 16px"><b>Failed</b></td>
+                                <td style="padding:2px 0;color:{'#c53030' if failed else 'inherit'}">{stat.failed_patients_count}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 8px 2px 0"><b>Avg session</b></td>
+                                <td style="padding:2px 0">{stat.avg_session_time_minutes:.1f} min</td>
+                                <td style="padding:2px 8px 2px 16px"><b>Truncated</b></td>
+                                <td style="padding:2px 0">{stat.sessions_truncated_count}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 8px 2px 0"><b>Mean wait</b></td>
+                                <td style="padding:2px 0">{stat.mean_wait_time_minutes:.1f} min</td>
+                                <td style="padding:2px 8px 2px 16px"><b>Max wait</b></td>
+                                <td style="padding:2px 0">{stat.max_wait_time_minutes:.1f} min</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:2px 8px 2px 0"><b>Nurse util</b></td>
+                                <td style="padding:2px 0">{stat.nurse_utilization_percent*100:.1f}%</td>
+                                <td style="padding:2px 8px 2px 16px"><b>Machine util</b></td>
+                                <td style="padding:2px 0">{stat.machine_utilization_percent*100:.1f}%</td>
+                            </tr>
+                        </table>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE HEADER
+# ═══════════════════════════════════════════════════════════════════════════════
 st.title("Dialysis Unit Simulation Dashboard")
 st.markdown("Interactively execute Monte Carlo paired-difference tests across patient scheduling strategies.")
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
 
     # ── Preset Manager ────────────────────────────────────────────────────
     st.header("🗂️ Preset Configs")
-
     saved = list_presets()
 
     col_load, col_del = st.columns([3, 1])
-
     with col_load:
         selected_preset = st.selectbox(
-            "Saved presets",
-            options=["— select —"] + saved,
-            key="preset_select",
-            label_visibility="collapsed"
+            "Saved presets", options=["— select —"] + saved,
+            key="preset_select", label_visibility="collapsed"
         )
     with col_del:
         del_clicked = st.button("🗑️", help="Delete selected preset", use_container_width=True)
 
-    load_clicked = st.button("⬇ Load preset", use_container_width=True, disabled=(selected_preset == "— select —"))
+    load_clicked = st.button(
+        "⬇ Load preset", use_container_width=True,
+        disabled=(selected_preset == "— select —")
+    )
 
     if load_clicked and selected_preset != "— select —":
         data = load_preset(selected_preset)
@@ -130,60 +235,48 @@ with st.sidebar:
 
     # ── Simulation Settings ───────────────────────────────────────────────
     st.header("Simulation Settings")
-
     strategies = st.multiselect(
-        "Strategies to Compare",
-        options=["FIFO", "FIXED"],
-        default=_get("strategies"),
-        key="cfg_strategies"
+        "Strategies to Compare", options=["FIFO", "FIXED"],
+        default=_get("strategies"), key="cfg_strategies"
     )
-
     n_iterations = st.number_input(
         "Monte Carlo Iterations", min_value=1, max_value=1000,
         value=_get("n_iterations"), key="cfg_n_iterations"
     )
     global_seed = st.number_input(
-        "Global Seed", min_value=0,
-        value=_get("global_seed"), key="cfg_global_seed"
+        "Global Seed", min_value=0, value=_get("global_seed"), key="cfg_global_seed"
     )
 
     # ── Patient Constraints ───────────────────────────────────────────────
     st.header("Patient Constraints")
-
     patient_vol_min, patient_vol_max = st.slider(
-        "Patient Volume Range", 5, 50,
-        value=_get("patient_vol"), key="cfg_patient_vol"
+        "Patient Volume Range", 5, 50, value=_get("patient_vol"), key="cfg_patient_vol"
     )
     arrival_min, arrival_max = st.slider(
-        "Arrival Time Range (T=0 to Max)", 0, 180,
-        value=_get("arrival_range"), key="cfg_arrival_range"
+        "Arrival Time Range (min)", 0, 180, value=_get("arrival_range"), key="cfg_arrival_range"
     )
     setup_min, setup_max = st.slider(
-        "Nurse Setup Time Range (min)", 1, 60,
-        value=_get("setup_range"), key="cfg_setup_range"
+        "Nurse Setup Time Range (min)", 1, 60, value=_get("setup_range"), key="cfg_setup_range"
     )
-    st.markdown("**Session Duration** — Prescribed per-patient dialysis time (~4 h target, min 3 h viable)")
+    st.markdown("**Session Duration** — Prescribed per-patient dialysis time (~4 h target)")
     session_min, session_max = st.slider(
         "Prescribed Session Range (min)", 60, 360,
         value=_get("session_range"), key="cfg_session_range",
-        help="Nominal session length per patient. Sessions cut by the 6-hour shift wall below the minimum are marked failed."
+        help="Nominal session length per patient."
     )
     min_session = st.slider(
         "Minimum Viable Session (min)", 60, 300,
         value=_get("min_session"), key="cfg_min_session",
-        help="Sessions shorter than this threshold (due to late start) count as failed."
+        help="Sessions shorter than this (due to late start) count as failed."
     )
 
     # ── Resource Constraints ──────────────────────────────────────────────
     st.header("Resource Constraints")
-
     machine_count_min, machine_count_max = st.slider(
-        "Machine Count Range", 5, 50,
-        value=_get("machine_count"), key="cfg_machine_count"
+        "Machine Count Range", 5, 50, value=_get("machine_count"), key="cfg_machine_count"
     )
     machine_ready_min, machine_ready_max = st.slider(
-        "Machine Ready Delay (min)", 0, 120,
-        value=_get("machine_ready"), key="cfg_machine_ready"
+        "Machine Ready Delay (min)", 0, 120, value=_get("machine_ready"), key="cfg_machine_ready"
     )
     defect_chance = st.slider(
         "Defective Machine Chance", 0.0, 1.0,
@@ -192,24 +285,22 @@ with st.sidebar:
 
     # ── Personnel Constraints ─────────────────────────────────────────────
     st.header("Personnel Constraints")
-
     nurse_count_min, nurse_count_max = st.slider(
-        "Nurse Count Range", 1, 10,
-        value=_get("nurse_count"), key="cfg_nurse_count"
+        "Nurse Count Range", 1, 10, value=_get("nurse_count"), key="cfg_nurse_count"
     )
 
     st.divider()
     run_clicked = st.button("▶ Run Simulation", type="primary", use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 # RUN SIMULATION
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 if run_clicked:
     if len(strategies) == 0:
         st.error("Please select at least one strategy.")
         st.stop()
 
-    with st.spinner("Running Monte Carlo simulation and Edge Cases..."):
+    with st.spinner("Running Monte Carlo simulation and edge cases..."):
         config = SimulationConfig(
             patient_volume=IntRange(patient_vol_min, patient_vol_max),
             total_machines=IntRange(machine_count_min, machine_count_max),
@@ -219,12 +310,10 @@ if run_clicked:
             min_session_duration_minutes=min_session,
             machine_defect_probability=defect_chance
         )
-
         config = config.with_overrides(
             arrival_minute_sampler=UniformIntSampler(IntRange(arrival_min, arrival_max)),
             setup_duration_minutes_sampler=UniformIntSampler(IntRange(setup_min, setup_max))
         )
-
         try:
             config.validate()
         except ValueError as e:
@@ -232,35 +321,48 @@ if run_clicked:
             st.stop()
 
         batcher = MonteCarloBatcher(
-            config=config,
-            strategy_ids=strategies,
-            n_iterations=n_iterations,
-            global_seed=global_seed
+            config=config, strategy_ids=strategies,
+            n_iterations=n_iterations, global_seed=global_seed
         )
 
-        results = batcher.run()
-        edge_cases = batcher.edge_case_run()
+        # Main run — also captures failed shifts as auto edge cases
+        results, auto_edge_cases = batcher.run_with_scenarios()
 
-        st.session_state['results']     = results
-        st.session_state['edge_cases']  = edge_cases
-        st.session_state['config']      = config
-        st.session_state['n_iterations']= n_iterations
-        st.session_state['strategies']  = strategies
+        # Predefined edge cases
+        predefined_edge_cases = batcher.edge_case_run()
 
+        # Merge: predefined first, then auto-discovered
+        all_edge_cases = {**predefined_edge_cases, **auto_edge_cases}
+
+        st.session_state.update({
+            "results":            results,
+            "edge_cases":         all_edge_cases,
+            "auto_edge_cases":    auto_edge_cases,
+            "predefined_edge_cases": predefined_edge_cases,
+            "config":             config,
+            "n_iterations":       n_iterations,
+            "strategies":         strategies,
+        })
+
+    n_auto = len(auto_edge_cases)
     st.success(
         f"Simulation completed: {len(results)} runs "
-        f"({n_iterations} iterations x {len(strategies)} strategies) + Edge Cases"
+        f"({n_iterations} iter x {len(strategies)} strategies) + "
+        f"{len(predefined_edge_cases)} predefined edge cases + "
+        f"{n_auto} auto-captured failure shift{'s' if n_auto != 1 else ''}"
     )
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULTS
-# ═══════════════════════════════════════════════════════════════════════════
-if 'results' in st.session_state:
-    results      = st.session_state['results']
-    edge_cases   = st.session_state['edge_cases']
-    config       = st.session_state['config']
-    n_iterations = st.session_state['n_iterations']
-    strategies   = st.session_state['strategies']
+# ═══════════════════════════════════════════════════════════════════════════════
+if "results" in st.session_state:
+    results              = st.session_state["results"]
+    all_edge_cases       = st.session_state["edge_cases"]
+    auto_edge_cases      = st.session_state["auto_edge_cases"]
+    predefined_edge_cases= st.session_state["predefined_edge_cases"]
+    config               = st.session_state["config"]
+    n_iterations         = st.session_state["n_iterations"]
+    strategies           = st.session_state["strategies"]
 
     # ── KPI Cards ─────────────────────────────────────────────────────────
     st.subheader("Key Performance Indicators (Aggregated Averages)")
@@ -271,25 +373,17 @@ if 'results' in st.session_state:
     for idx, strat in enumerate(strategies):
         with cols[idx]:
             st.markdown(f"**{strat}**")
-            strat_data = means.loc[strat] if strat in means.index else None
-            if strat_data is not None:
-                st.metric("Avg Mean Wait (min)", f"{strat_data['mean_wait_time_minutes']:.1f}")
-                st.metric("Avg Max Wait (min)",  f"{strat_data['max_wait_time_minutes']:.1f}")
-                st.metric(
-                    "Avg Session Time (min)",
-                    f"{strat_data['avg_session_time_minutes']:.1f}",
-                    help="Mean actual dialysis session duration across all served patients"
-                )
-                st.metric(
-                    "Avg Truncated Sessions",
-                    f"{strat_data['sessions_truncated_count']:.1f}",
-                    help="Mean number of sessions cut short by the shift wall per iteration"
-                )
-                st.metric("Avg Failed Patients", f"{strat_data['failed_patients_count']:.1f}")
-                n_util = strat_data['nurse_utilization_percent'] * 100
-                m_util = strat_data['machine_utilization_percent'] * 100
-                st.metric("Nurse Utilization",   f"{n_util:.1f}%")
-                st.metric("Machine Utilization", f"{m_util:.1f}%")
+            d = means.loc[strat] if strat in means.index else None
+            if d is not None:
+                st.metric("Avg Mean Wait (min)", f"{d['mean_wait_time_minutes']:.1f}")
+                st.metric("Avg Max Wait (min)",  f"{d['max_wait_time_minutes']:.1f}")
+                st.metric("Avg Session Time (min)", f"{d['avg_session_time_minutes']:.1f}",
+                          help="Mean actual dialysis session duration")
+                st.metric("Avg Truncated Sessions", f"{d['sessions_truncated_count']:.1f}",
+                          help="Sessions cut short by shift wall")
+                st.metric("Avg Failed Patients", f"{d['failed_patients_count']:.1f}")
+                st.metric("Nurse Utilization",   f"{d['nurse_utilization_percent']*100:.1f}%")
+                st.metric("Machine Utilization", f"{d['machine_utilization_percent']*100:.1f}%")
 
     st.divider()
 
@@ -318,23 +412,64 @@ if 'results' in st.session_state:
 
     st.divider()
     st.subheader("Time Series Analysis (Across Iterations)")
-
     col3, col4, col5 = st.columns(3)
     with col3:
         st.pyplot(viz.plot_metric_over_iterations(
-            results, "mean_wait_time_minutes",
-            "Mean Wait Time vs Iteration", "Wait Time (min)"
+            results, "mean_wait_time_minutes", "Mean Wait Time vs Iteration", "Wait Time (min)"
         ))
     with col4:
         st.pyplot(viz.plot_metric_over_iterations(
-            results, "max_wait_time_minutes",
-            "Max Wait Time vs Iteration", "Wait Time (min)"
+            results, "max_wait_time_minutes",  "Max Wait Time vs Iteration",  "Wait Time (min)"
         ))
     with col5:
         st.pyplot(viz.plot_metric_over_iterations(
-            results, "avg_session_time_minutes",
-            "Avg Session Time vs Iteration", "Session Duration (min)"
+            results, "avg_session_time_minutes", "Avg Session Time vs Iteration", "Duration (min)"
         ))
+
+    st.divider()
+
+    # ── Edge Cases ────────────────────────────────────────────────────────
+    st.subheader("Edge-Case Stress Tests")
+
+    n_auto = len(auto_edge_cases)
+    if n_auto:
+        st.info(
+            f"**{n_auto} auto-captured failure shift{'s' if n_auto != 1 else ''}** "
+            f"detected in the Monte Carlo run (any shift with ≥1 failed patient "
+            f"is preserved here for inspection).",
+            icon="⚠️"
+        )
+
+    tab_labels = []
+    if predefined_edge_cases:
+        tab_labels.append(f"📋 Predefined ({len(predefined_edge_cases)})")
+    if auto_edge_cases:
+        tab_labels.append(f"🔍 Auto-captured ({n_auto})")
+    tab_labels.append("📁 All")
+
+    tabs = st.tabs(tab_labels)
+    tab_idx = 0
+
+    if predefined_edge_cases:
+        with tabs[tab_idx]:
+            for name, (scenario, stats) in predefined_edge_cases.items():
+                render_edge_case_card(name, scenario, stats)
+        tab_idx += 1
+
+    if auto_edge_cases:
+        with tabs[tab_idx]:
+            st.caption(
+                "Each card below represents a Monte Carlo iteration where at least one "
+                "patient could not receive the minimum viable session duration."
+            )
+            for name, (scenario, stats) in auto_edge_cases.items():
+                render_edge_case_card(name, scenario, stats)
+        tab_idx += 1
+
+    # All tab
+    with tabs[tab_idx]:
+        for name, (scenario, stats) in all_edge_cases.items():
+            render_edge_case_card(name, scenario, stats)
 
     st.divider()
 
@@ -353,7 +488,9 @@ if 'results' in st.session_state:
             with st.spinner(f"Generating PDF for {strat_to_report}..."):
                 fd, path = tempfile.mkstemp(suffix=".pdf")
                 os.close(fd)
-                generate_individual_report(strat_to_report, results, edge_cases, config, n_iterations, path)
+                generate_individual_report(
+                    strat_to_report, results, all_edge_cases, config, n_iterations, path
+                )
                 with open(path, "rb") as f:
                     pdf_bytes = f.read()
                 st.download_button(
@@ -365,12 +502,13 @@ if 'results' in st.session_state:
 
     with report_cols[1]:
         st.markdown("##### Global Comparison Report")
-        st.markdown("Generates a combined document with all strategies and comparative metrics.")
         if st.button("Generate Global Report", type="primary"):
             with st.spinner("Generating Global PDF Report..."):
                 fd, path = tempfile.mkstemp(suffix=".pdf")
                 os.close(fd)
-                generate_global_comparison_report(results, edge_cases, config, n_iterations, path)
+                generate_global_comparison_report(
+                    results, all_edge_cases, config, n_iterations, path
+                )
                 with open(path, "rb") as f:
                     pdf_bytes = f.read()
                 st.download_button(
