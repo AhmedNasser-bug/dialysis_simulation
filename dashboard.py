@@ -103,13 +103,13 @@ def render_edge_case_card(
                     "Seed",
                 ],
                 "Value": [
-                    n_active, n_defective, n_active + n_defective,
-                    scenario.nurse_count, n_patients,
+                    str(n_active), str(n_defective), str(n_active + n_defective),
+                    str(scenario.nurse_count), str(n_patients),
                     f"{arr_lo}–{arr_hi} min",
                     f"{scenario.shift_end_minutes} min",
                     f"{scenario.min_session_duration_minutes} min",
                     f"{scenario.machine_cooldown_minutes} min",
-                    scenario.scenario_seed,
+                    str(scenario.scenario_seed),
                 ],
             }
             st.dataframe(
