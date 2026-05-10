@@ -87,6 +87,10 @@ class MonteCarloBatcher:
         csv_file = None
         writer = None
         if output_csv_path:
+            import os
+            out_dir = os.path.dirname(output_csv_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
             csv_file = open(output_csv_path, 'w', newline='', encoding='utf-8')
             field_names = [f.name for f in dataclasses.fields(ShiftStatistics)]
             writer = csv.DictWriter(csv_file, fieldnames=field_names)

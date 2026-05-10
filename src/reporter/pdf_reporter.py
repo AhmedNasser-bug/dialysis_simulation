@@ -603,6 +603,9 @@ def generate_individual_report(
     pdf.add_page()
     pdf.write_edge_cases(edge_cases, strategy_name)
 
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     pdf.output(output_path)
 
 
@@ -664,4 +667,7 @@ def generate_global_comparison_report(
 
     pdf.write_edge_cases(edge_cases)
 
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     pdf.output(output_path)
