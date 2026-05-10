@@ -240,7 +240,7 @@ with st.sidebar:
         default=_get("strategies"), key="cfg_strategies"
     )
     n_iterations = st.number_input(
-        "Monte Carlo Iterations", min_value=1, max_value=1000,
+        "Monte Carlo Iterations", min_value=1, max_value=5000,
         value=_get("n_iterations"), key="cfg_n_iterations"
     )
     global_seed = st.number_input(
@@ -325,17 +325,32 @@ if run_clicked:
             n_iterations=n_iterations, global_seed=global_seed
         )
 
-        # Main run — also captures failed shifts as auto edge cases
-        results, auto_edge_cases = batcher.run_with_scenarios()
+        progress_bar = st.progress(0, text="Running Monte Carlo iterations...")
+        def update_progress(current: int, total: int):
+            progress_bar.progress(current / total, text=f"Running Monte Carlo iterations... ({current}/{total})")
+
+        output_csv_path = "outputs/simulation_results.csv"
+        os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
+
+        # Main run — streams to CSV and captures failed shifts
+        _, auto_edge_cases = batcher.run_with_scenarios(
+            output_csv_path=output_csv_path,
+            progress_callback=update_progress
+        )
 
         # Predefined edge cases
         predefined_edge_cases = batcher.edge_case_run()
+
+        # Load streamed results into memory-efficient DataFrame
+        results_df = pd.read_csv(output_csv_path)
+
+        progress_bar.empty()
 
         # Merge: predefined first, then auto-discovered
         all_edge_cases = {**predefined_edge_cases, **auto_edge_cases}
 
         st.session_state.update({
-            "results":            results,
+            "results":            results_df,
             "edge_cases":         all_edge_cases,
             "auto_edge_cases":    auto_edge_cases,
             "predefined_edge_cases": predefined_edge_cases,
@@ -346,7 +361,7 @@ if run_clicked:
 
     n_auto = len(auto_edge_cases)
     st.success(
-        f"Simulation completed: {len(results)} runs "
+        f"Simulation completed: {len(results_df)} runs "
         f"({n_iterations} iter x {len(strategies)} strategies) + "
         f"{len(predefined_edge_cases)} predefined edge cases + "
         f"{n_auto} auto-captured failure shift{'s' if n_auto != 1 else ''}"
@@ -366,7 +381,9 @@ if "results" in st.session_state:
 
     # ── KPI Cards ─────────────────────────────────────────────────────────
     st.subheader("Key Performance Indicators (Aggregated Averages)")
-    df = pd.DataFrame([Visualizer._stats_to_dict(r) for r in results])
+    
+    # results is already a DataFrame
+    df = results
     means = df.groupby("strategy_name").mean(numeric_only=True)
 
     cols = st.columns(len(strategies))

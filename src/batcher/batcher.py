@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
+import dataclasses
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Callable
 
 from src.config import SimulationConfig
 from src.models import ShiftScenario, ShiftStatistics
@@ -38,51 +40,82 @@ class MonteCarloBatcher:
         self._n_iterations = n_iterations
         self._global_seed = global_seed
 
-    def run(self) -> List[ShiftStatistics]:
-        """Run Monte Carlo iterations; return flat list of ShiftStatistics."""
+    def run(self, output_csv_path: Optional[str] = None) -> List[ShiftStatistics]:
+        """Run Monte Carlo iterations; return flat list of ShiftStatistics.
+        If output_csv_path is provided, writes results incrementally and returns an empty list."""
         results: List[ShiftStatistics] = []
-        for i in range(self._n_iterations):
-            seed = self._global_seed + i
-            scenario = generate_shift_scenario(self._config, seed=seed)
-            for strategy in self._strategies:
-                stats = strategy.process_shift(scenario)
-                results.append(stats)
+        csv_file = None
+        writer = None
+
+        if output_csv_path:
+            csv_file = open(output_csv_path, 'w', newline='', encoding='utf-8')
+            field_names = [f.name for f in dataclasses.fields(ShiftStatistics)]
+            writer = csv.DictWriter(csv_file, fieldnames=field_names)
+            writer.writeheader()
+
+        try:
+            for i in range(self._n_iterations):
+                seed = self._global_seed + i
+                scenario = generate_shift_scenario(self._config, seed=seed)
+                for strategy in self._strategies:
+                    stats = strategy.process_shift(scenario)
+                    if writer:
+                        writer.writerow(dataclasses.asdict(stats))
+                    else:
+                        results.append(stats)
+        finally:
+            if csv_file:
+                csv_file.close()
+
         return results
 
-    def run_with_scenarios(self) -> Tuple[List[ShiftStatistics], EdgeCaseBundle]:
+    def run_with_scenarios(
+        self,
+        output_csv_path: Optional[str] = None,
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> Tuple[List[ShiftStatistics], EdgeCaseBundle]:
         """
         Run Monte Carlo iterations and automatically collect failed-patient
         shifts as named edge cases.
 
-        Returns
-        -------
-        results : List[ShiftStatistics]
-            Flat list (same as ``run()``).
-        discovered_edge_cases : EdgeCaseBundle
-            Dict of auto-captured edge cases keyed as
-            ``"Auto: seed-{seed} ({strategy})"`` for any shift where
-            ``failed_patients_count > 0``.  Each value is a
-            ``(ShiftScenario, [ShiftStatistics])`` tuple so the full shift
-            snapshot is preserved alongside the strategy results.
+        If output_csv_path is provided, the main results list will be empty
+        and stats will be written incrementally to the CSV.
         """
         results: List[ShiftStatistics] = []
         discovered: EdgeCaseBundle = {}
+        
+        csv_file = None
+        writer = None
+        if output_csv_path:
+            csv_file = open(output_csv_path, 'w', newline='', encoding='utf-8')
+            field_names = [f.name for f in dataclasses.fields(ShiftStatistics)]
+            writer = csv.DictWriter(csv_file, fieldnames=field_names)
+            writer.writeheader()
 
-        for i in range(self._n_iterations):
-            seed = self._global_seed + i
-            scenario = generate_shift_scenario(self._config, seed=seed)
+        try:
+            for i in range(self._n_iterations):
+                seed = self._global_seed + i
+                scenario = generate_shift_scenario(self._config, seed=seed)
 
-            for strategy in self._strategies:
-                stats = strategy.process_shift(scenario)
-                results.append(stats)
+                for strategy in self._strategies:
+                    stats = strategy.process_shift(scenario)
+                    
+                    if writer:
+                        writer.writerow(dataclasses.asdict(stats))
+                    else:
+                        results.append(stats)
 
-                if stats.failed_patients_count > 0:
-                    label = f"Auto: seed-{seed} ({strategy.name})"
-                    # Accumulate: if the same scenario triggered failures for
-                    # multiple strategies, group them under the same key.
-                    if label not in discovered:
-                        discovered[label] = (scenario, [])
-                    discovered[label][1].append(stats)
+                    if stats.failed_patients_count > 0:
+                        label = f"Auto: seed-{seed} ({strategy.name})"
+                        if label not in discovered:
+                            discovered[label] = (scenario, [])
+                        discovered[label][1].append(stats)
+                
+                if progress_callback:
+                    progress_callback(i + 1, self._n_iterations)
+        finally:
+            if csv_file:
+                csv_file.close()
 
         return results, discovered
 

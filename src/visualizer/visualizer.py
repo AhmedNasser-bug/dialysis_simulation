@@ -6,7 +6,7 @@ Operates strictly against Schema 'S' interface.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Union
 import matplotlib.pyplot as plt
 import matplotlib.figure as mpfig
 import matplotlib.lines as mlines
@@ -23,11 +23,16 @@ _NOM_SESSION = 240   # 4-hour nominal session line
 
 
 class Visualizer:
+    def _ensure_dataframe(self, results: Union[List[ShiftStatistics], pd.DataFrame]) -> pd.DataFrame:
+        if isinstance(results, pd.DataFrame):
+            return results
+        return pd.DataFrame([self._stats_to_dict(r) for r in results])
+
     def plot_wait_distribution(
         self,
-        results: List[ShiftStatistics]
+        results: Union[List[ShiftStatistics], pd.DataFrame]
     ) -> mpfig.Figure:
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
@@ -58,9 +63,9 @@ class Visualizer:
 
     def plot_utilization(
         self,
-        results: List[ShiftStatistics]
+        results: Union[List[ShiftStatistics], pd.DataFrame]
     ) -> mpfig.Figure:
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
 
         df_melted = df.melt(
             id_vars=["strategy_name"],
@@ -96,13 +101,13 @@ class Visualizer:
 
     def plot_session_time_distribution(
         self,
-        results: List[ShiftStatistics]
+        results: Union[List[ShiftStatistics], pd.DataFrame]
     ) -> mpfig.Figure:
         """
         Histogram + KDE of avg actual session duration per strategy.
         Annotated with reference lines for the 3-hour minimum and 4-hour nominal target.
         """
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
 
         fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -135,16 +140,16 @@ class Visualizer:
         return fig
 
     # Keep old name as alias for PDF reporter backward compat
-    def plot_overrun_histogram(self, results: List[ShiftStatistics]) -> mpfig.Figure:
+    def plot_overrun_histogram(self, results: Union[List[ShiftStatistics], pd.DataFrame]) -> mpfig.Figure:
         return self.plot_session_time_distribution(results)
 
     def plot_paired_difference(
         self,
-        results: List[ShiftStatistics],
+        results: Union[List[ShiftStatistics], pd.DataFrame],
         metric_col: str = "mean_wait_time_minutes",
         metric_label: str = "Mean Wait Time"
     ) -> mpfig.Figure:
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
         strategies = df["strategy_name"].unique()
 
         if len(strategies) < 2:
@@ -197,7 +202,7 @@ class Visualizer:
 
     def plot_metric_over_iterations(
         self,
-        results: List[ShiftStatistics],
+        results: Union[List[ShiftStatistics], pd.DataFrame],
         metric_column: str,
         title: str,
         ylabel: str
@@ -206,7 +211,7 @@ class Visualizer:
         Line plot showing a specific metric across all iterations for each strategy,
         with a moving average applied for smoother visual understanding.
         """
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results).copy()
         strategies = df["strategy_name"].unique()
 
         # Calculate iteration index
@@ -255,10 +260,10 @@ class Visualizer:
     def plot_single_wait_distribution(
         self,
         strategy_name: str,
-        results: List[ShiftStatistics]
+        results: Union[List[ShiftStatistics], pd.DataFrame]
     ) -> mpfig.Figure:
         """Plot wait time distribution for a single strategy."""
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
@@ -276,13 +281,13 @@ class Visualizer:
     def plot_single_session_distribution(
         self,
         strategy_name: str,
-        results: List[ShiftStatistics]
+        results: Union[List[ShiftStatistics], pd.DataFrame]
     ) -> mpfig.Figure:
         """
         Distribution of actual session times for a single strategy.
         Reference lines show the 3h minimum and 4h nominal target.
         """
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
 
         fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -301,10 +306,10 @@ class Visualizer:
     def plot_single_utilization(
         self,
         strategy_name: str,
-        results: List[ShiftStatistics]
+        results: Union[List[ShiftStatistics], pd.DataFrame]
     ) -> mpfig.Figure:
         """Plot resource utilization density for a single strategy using Violins."""
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
 
         # Melt DataFrame for seaborn violin plot
         melted = pd.melt(
@@ -328,9 +333,9 @@ class Visualizer:
         plt.tight_layout()
         return fig
 
-    def plot_global_utilization_violin(self, results: List[ShiftStatistics]) -> mpfig.Figure:
+    def plot_global_utilization_violin(self, results: Union[List[ShiftStatistics], pd.DataFrame]) -> mpfig.Figure:
         """Plot resource utilization density globally across strategies."""
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
         melted = pd.melt(
             df,
             id_vars=["strategy_name"],
@@ -353,9 +358,9 @@ class Visualizer:
         plt.tight_layout()
         return fig
 
-    def plot_cdf_wait_time(self, results: List[ShiftStatistics], strategy_name: str = None) -> mpfig.Figure:
+    def plot_cdf_wait_time(self, results: Union[List[ShiftStatistics], pd.DataFrame], strategy_name: str = None) -> mpfig.Figure:
         """Plot Cumulative Distribution Function for Mean Wait Time."""
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
         if strategy_name:
             df = df[df["strategy_name"] == strategy_name]
 
@@ -373,14 +378,14 @@ class Visualizer:
 
     def plot_scatter_wait_vs_session_time(
         self,
-        results: List[ShiftStatistics],
+        results: Union[List[ShiftStatistics], pd.DataFrame],
         strategy_name: str = None
     ) -> mpfig.Figure:
         """
         Scatter plot: mean wait time vs. avg actual session duration.
         Shows the trade-off between patient waiting and session completeness.
         """
-        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+        df = self._ensure_dataframe(results)
         if strategy_name:
             df = df[df["strategy_name"] == strategy_name]
 
@@ -413,7 +418,7 @@ class Visualizer:
     # Backward-compat alias used in the PDF reporter
     def plot_scatter_wait_vs_overrun(
         self,
-        results: List[ShiftStatistics],
+        results: Union[List[ShiftStatistics], pd.DataFrame],
         strategy_name: str = None
     ) -> mpfig.Figure:
         return self.plot_scatter_wait_vs_session_time(results, strategy_name)

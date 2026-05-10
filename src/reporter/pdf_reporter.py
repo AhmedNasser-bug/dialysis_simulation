@@ -1,7 +1,7 @@
 import os
 import tempfile
 from datetime import datetime
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Union
 
 import pandas as pd
 import numpy as np
@@ -552,21 +552,21 @@ class PDFReporter(FPDF):
 
 def generate_individual_report(
     strategy_name: str,
-    results: List[ShiftStatistics],
-    edge_cases: Dict[str, List[ShiftStatistics]],
+    results: Union[List[ShiftStatistics], pd.DataFrame],
+    edge_cases: Dict[str, Tuple[ShiftScenario, List[ShiftStatistics]]],
     config: SimulationConfig,
     n_iterations: int,
     output_path: str,
 ):
     pdf = PDFReporter()
     viz = Visualizer()
-    df  = pd.DataFrame([viz._stats_to_dict(r) for r in results])
+    df  = viz._ensure_dataframe(results)
 
-    strat_results = [r for r in results if r.strategy_name == strategy_name]
-    if not strat_results:
+    strat_results = df[df["strategy_name"] == strategy_name]
+    if strat_results.empty:
         return
 
-    all_strategies = list(set(r.strategy_name for r in results))
+    all_strategies = df["strategy_name"].unique().tolist()
 
     pdf.create_cover_page(
         title=f"Strategy Profile: {strategy_name}",
@@ -605,17 +605,17 @@ def generate_individual_report(
 
 
 def generate_global_comparison_report(
-    results: List[ShiftStatistics],
-    edge_cases: Dict[str, List[ShiftStatistics]],
+    results: Union[List[ShiftStatistics], pd.DataFrame],
+    edge_cases: Dict[str, Tuple[ShiftScenario, List[ShiftStatistics]]],
     config: SimulationConfig,
     n_iterations: int,
     output_path: str,
 ):
     pdf = PDFReporter()
     viz = Visualizer()
-    df  = pd.DataFrame([viz._stats_to_dict(r) for r in results])
+    df  = viz._ensure_dataframe(results)
 
-    strategies = list(set(r.strategy_name for r in results))
+    strategies = df["strategy_name"].unique().tolist()
 
     pdf.create_cover_page(
         title="Global Comparison Report",
