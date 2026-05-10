@@ -107,4 +107,5 @@ def generate_shift_scenario(
         scenario_seed=seed,
         machine_cooldown_minutes=config.machine_cooldown_minutes,
         shift_end_minutes=config.shift_duration_minutes,
+        min_session_duration_minutes=config.min_session_duration_minutes,
     )

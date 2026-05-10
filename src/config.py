@@ -51,11 +51,12 @@ class SimulationConfig:
     """
 
     # 1) Static temporal bounds
-    shift_duration_minutes: int = 300
+    shift_duration_minutes: int = 360          # 6-hour hard wall
+    min_session_duration_minutes: int = 180    # 3-hour minimum viable session
     machine_cooldown_minutes: int = 60
 
     # 2) Stochastic resource ranges
-    session_duration_minutes_range: IntRange = IntRange(240, 360)
+    session_duration_minutes_range: IntRange = IntRange(210, 240)  # ~4 h prescribed session
     total_machines: IntRange = IntRange(15, 20)
     patient_volume: IntRange = IntRange(15, 20)
     nurse_count: IntRange = IntRange(2, 4)
@@ -79,6 +80,10 @@ class SimulationConfig:
     def validate(self) -> None:
         if self.shift_duration_minutes <= 0:
             raise ValueError("shift_duration_minutes must be > 0")
+        if self.min_session_duration_minutes <= 0:
+            raise ValueError("min_session_duration_minutes must be > 0")
+        if self.min_session_duration_minutes >= self.shift_duration_minutes:
+            raise ValueError("min_session_duration_minutes must be < shift_duration_minutes")
         if self.session_duration_minutes_range.low <= 0:
             raise ValueError("session_duration_minutes_range.low must be > 0")
         if self.machine_cooldown_minutes < 0:

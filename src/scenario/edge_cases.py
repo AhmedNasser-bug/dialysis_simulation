@@ -20,7 +20,7 @@ def generate_burst_arrival(config: SimulationConfig, seed: int = 42) -> ShiftSce
 
     total_machines = config.total_machines.high
     machine_ready_times = {mid: 0 for mid in range(1, total_machines + 1)}
-    
+
     return ShiftScenario(
         patient_arrivals=patient_arrivals,
         nurse_count=nurse_count,
@@ -29,13 +29,14 @@ def generate_burst_arrival(config: SimulationConfig, seed: int = 42) -> ShiftSce
         scenario_seed=seed,
         machine_cooldown_minutes=config.machine_cooldown_minutes,
         shift_end_minutes=config.shift_duration_minutes,
+        min_session_duration_minutes=config.min_session_duration_minutes,
     )
 
 def generate_maintenance_disaster(config: SimulationConfig, seed: int = 42) -> ShiftScenario:
     rng = random.Random(seed)
     patient_count = config.patient_volume.high
     nurse_count = config.nurse_count.high
-    
+
     patient_arrivals = []
     for pid in range(1, patient_count + 1):
         patient_arrivals.append({
@@ -47,11 +48,11 @@ def generate_maintenance_disaster(config: SimulationConfig, seed: int = 42) -> S
 
     total_machines = config.total_machines.low
     machine_ready_times = {mid: 0 for mid in range(1, total_machines + 1)}
-    
+
     # 80% of machines are defective
     defective_count = int(total_machines * 0.8)
     defective_machine_ids = list(range(1, defective_count + 1))
-    
+
     return ShiftScenario(
         patient_arrivals=patient_arrivals,
         nurse_count=nurse_count,
@@ -60,12 +61,13 @@ def generate_maintenance_disaster(config: SimulationConfig, seed: int = 42) -> S
         scenario_seed=seed,
         machine_cooldown_minutes=config.machine_cooldown_minutes,
         shift_end_minutes=config.shift_duration_minutes,
+        min_session_duration_minutes=config.min_session_duration_minutes,
     )
 
 def generate_marathon_shift(config: SimulationConfig, seed: int = 42) -> ShiftScenario:
     patient_count = config.patient_volume.high
     nurse_count = config.nurse_count.low
-    
+
     # Try to extract the max bounds, fallback to reasonable large numbers
     max_setup = 30
     if isinstance(config.setup_duration_minutes_sampler, UniformIntSampler):
@@ -82,7 +84,7 @@ def generate_marathon_shift(config: SimulationConfig, seed: int = 42) -> ShiftSc
 
     total_machines = config.total_machines.low
     machine_ready_times = {mid: 0 for mid in range(1, total_machines + 1)}
-    
+
     return ShiftScenario(
         patient_arrivals=patient_arrivals,
         nurse_count=nurse_count,
@@ -91,6 +93,7 @@ def generate_marathon_shift(config: SimulationConfig, seed: int = 42) -> ShiftSc
         scenario_seed=seed,
         machine_cooldown_minutes=config.machine_cooldown_minutes,
         shift_end_minutes=config.shift_duration_minutes,
+        min_session_duration_minutes=config.min_session_duration_minutes,
     )
 
 def get_all_edge_cases(config: SimulationConfig) -> Dict[str, ShiftScenario]:

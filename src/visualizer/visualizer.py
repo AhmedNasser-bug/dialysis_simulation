@@ -9,24 +9,31 @@ from __future__ import annotations
 from typing import List
 import matplotlib.pyplot as plt
 import matplotlib.figure as mpfig
+import matplotlib.lines as mlines
 import pandas as pd
+import numpy as np
 import seaborn as sns
 
 from src.models import ShiftStatistics
 
+# Shared style constants
+_PALETTE = "deep"
+_MIN_SESSION = 180   # 3-hour minimum viable session line
+_NOM_SESSION = 240   # 4-hour nominal session line
+
 
 class Visualizer:
     def plot_wait_distribution(
-        self, 
+        self,
         results: List[ShiftStatistics]
     ) -> mpfig.Figure:
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
-        
+
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-        
+
         sns.boxplot(
-            data=df, 
-            x="strategy_name", 
+            data=df,
+            x="strategy_name",
             y="mean_wait_time_minutes",
             ax=axes[0]
         )
@@ -34,41 +41,41 @@ class Visualizer:
         axes[0].set_xlabel("Strategy")
         axes[0].set_ylabel("Mean Wait Time (minutes)")
         axes[0].tick_params(axis='x', rotation=45)
-        
+
         sns.boxplot(
             data=df,
             x="strategy_name",
-            y="max_wait_time_minutes", 
+            y="max_wait_time_minutes",
             ax=axes[1]
         )
         axes[1].set_title("Maximum Wait Time Distribution")
         axes[1].set_xlabel("Strategy")
         axes[1].set_ylabel("Max Wait Time (minutes)")
         axes[1].tick_params(axis='x', rotation=45)
-        
+
         plt.tight_layout()
         return fig
-    
+
     def plot_utilization(
         self,
         results: List[ShiftStatistics]
     ) -> mpfig.Figure:
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
-        
+
         df_melted = df.melt(
             id_vars=["strategy_name"],
             value_vars=["nurse_utilization_percent", "machine_utilization_percent"],
             var_name="resource_type",
             value_name="utilization_percent"
         )
-        
+
         df_melted["resource_type"] = df_melted["resource_type"].map({
             "nurse_utilization_percent": "Nurse",
             "machine_utilization_percent": "Machine"
         })
-        
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        
+
         sns.barplot(
             data=df_melted,
             x="strategy_name",
@@ -76,79 +83,95 @@ class Visualizer:
             hue="resource_type",
             ax=ax
         )
-        
+
         ax.set_title("Resource Utilization by Strategy")
         ax.set_xlabel("Strategy")
         ax.set_ylabel("Utilization (fraction)")
         ax.set_ylim(0, 1.0)
         ax.tick_params(axis='x', rotation=45)
         ax.legend(title="Resource Type")
-        
+
         plt.tight_layout()
         return fig
-    
-    def plot_overrun_histogram(
+
+    def plot_session_time_distribution(
         self,
         results: List[ShiftStatistics]
     ) -> mpfig.Figure:
+        """
+        Histogram + KDE of avg actual session duration per strategy.
+        Annotated with reference lines for the 3-hour minimum and 4-hour nominal target.
+        """
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
-        
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        
-        strategies = df["strategy_name"].unique()
-        colors = sns.color_palette(n_colors=len(strategies))
-        
-        for idx, strategy in enumerate(sorted(strategies)):
-            subset = df[df["strategy_name"] == strategy]["shift_overrun_minutes"]
+
+        strategies = sorted(df["strategy_name"].unique())
+        colors = sns.color_palette(_PALETTE, n_colors=len(strategies))
+
+        for idx, strategy in enumerate(strategies):
+            subset = df[df["strategy_name"] == strategy]["avg_session_time_minutes"]
             ax.hist(
                 subset,
                 bins=20,
-                alpha=0.7,
+                alpha=0.6,
                 label=strategy,
                 color=colors[idx],
                 edgecolor='black'
             )
-        
-        ax.set_title("Shift Overrun Distribution")
-        ax.set_xlabel("Overrun Minutes")
+
+        # Reference lines
+        ax.axvline(_MIN_SESSION, color='crimson', linestyle='--', linewidth=1.5,
+                   label=f"Min viable ({_MIN_SESSION} min / 3 h)")
+        ax.axvline(_NOM_SESSION, color='steelblue', linestyle='--', linewidth=1.5,
+                   label=f"Nominal target ({_NOM_SESSION} min / 4 h)")
+
+        ax.set_title("Actual Session Time Distribution by Strategy")
+        ax.set_xlabel("Avg Session Duration (min)")
         ax.set_ylabel("Frequency")
         ax.legend(title="Strategy")
-        
+
         plt.tight_layout()
         return fig
-    
+
+    # Keep old name as alias for PDF reporter backward compat
+    def plot_overrun_histogram(self, results: List[ShiftStatistics]) -> mpfig.Figure:
+        return self.plot_session_time_distribution(results)
+
     def plot_paired_difference(
         self,
-        results: List[ShiftStatistics]
+        results: List[ShiftStatistics],
+        metric_col: str = "mean_wait_time_minutes",
+        metric_label: str = "Mean Wait Time"
     ) -> mpfig.Figure:
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         strategies = df["strategy_name"].unique()
-        
+
         if len(strategies) < 2:
             raise ValueError(
                 f"Paired-difference plot requires at least 2 distinct strategies; "
                 f"found: {list(strategies)}"
             )
-        
+
         pivot_df = df.pivot_table(
             index=df.index // len(strategies),
             columns="strategy_name",
-            values="mean_wait_time_minutes",
+            values=metric_col,
             aggfunc='first'
         )
-        
+
         strat_names = sorted(pivot_df.columns)
         if len(strat_names) >= 2:
             diff_col = f"{strat_names[0]}_minus_{strat_names[1]}"
             pivot_df[diff_col] = pivot_df[strat_names[0]] - pivot_df[strat_names[1]]
-            
+
             diffs = pivot_df[diff_col].dropna()
             mean_diff = diffs.mean()
             std_err = diffs.std() / (len(diffs) ** 0.5)
             ci_95 = 1.96 * std_err
-            
+
             fig, ax = plt.subplots(figsize=(8, 6))
-            
+
             ax.errorbar(
                 [diff_col],
                 [mean_diff],
@@ -158,20 +181,20 @@ class Visualizer:
                 markersize=12,
                 color='steelblue'
             )
-            
+
             ax.axhline(y=0, color='red', linestyle='--', alpha=0.5, label='No Difference')
             ax.set_title(f"Paired Difference: {strat_names[0]} vs {strat_names[1]}\n"
-                        f"Mean Diff: {mean_diff:.2f} min [95% CI: ±{ci_95:.2f}]")
-            ax.set_ylabel("Mean Wait Time Difference (minutes)")
+                        f"{metric_label} -- Mean Diff: {mean_diff:.2f} min [95% CI: +/-{ci_95:.2f}]")
+            ax.set_ylabel(f"{metric_label} Difference (minutes)")
             ax.set_xticks([0])
             ax.set_xticklabels([f"{strat_names[0]} - {strat_names[1]}"])
             ax.grid(True, alpha=0.3)
-            
+
             plt.tight_layout()
             return fig
-        
+
         raise ValueError("Could not compute paired differences")
-    
+
     def plot_metric_over_iterations(
         self,
         results: List[ShiftStatistics],
@@ -185,12 +208,12 @@ class Visualizer:
         """
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         strategies = df["strategy_name"].unique()
-        
+
         # Calculate iteration index
         df["iteration"] = df.index // len(strategies)
-        
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        
+
         # Plot raw data faintly in the background
         sns.lineplot(
             data=df,
@@ -202,15 +225,15 @@ class Visualizer:
             legend=False,
             ax=ax
         )
-        
+
         # Calculate rolling moving average (dynamic window size based on iteration count)
         total_iterations = len(df) // len(strategies)
-        window_size = max(3, total_iterations // 20) # 5% rolling window
-        
+        window_size = max(3, total_iterations // 20)  # 5% rolling window
+
         df["smoothed_metric"] = df.groupby("strategy_name")[metric_column].transform(
             lambda x: x.rolling(window=window_size, min_periods=1).mean()
         )
-        
+
         # Plot smoothed data solidly
         sns.lineplot(
             data=df,
@@ -220,15 +243,15 @@ class Visualizer:
             linewidth=2.5,
             ax=ax
         )
-        
+
         ax.set_title(f"{title} (Smoothed Window: {window_size})")
         ax.set_xlabel("Iteration")
         ax.set_ylabel(ylabel)
         ax.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
         return fig
-    
+
     def plot_single_wait_distribution(
         self,
         strategy_name: str,
@@ -236,17 +259,42 @@ class Visualizer:
     ) -> mpfig.Figure:
         """Plot wait time distribution for a single strategy."""
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
-        
+
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-        
+
         sns.histplot(data=df, x="mean_wait_time_minutes", kde=True, ax=axes[0], color="skyblue")
         axes[0].set_title(f"Mean Wait Time - {strategy_name}")
         axes[0].set_xlabel("Mean Wait Time (min)")
-        
+
         sns.histplot(data=df, x="max_wait_time_minutes", kde=True, ax=axes[1], color="salmon")
         axes[1].set_title(f"Max Wait Time - {strategy_name}")
         axes[1].set_xlabel("Max Wait Time (min)")
-        
+
+        plt.tight_layout()
+        return fig
+
+    def plot_single_session_distribution(
+        self,
+        strategy_name: str,
+        results: List[ShiftStatistics]
+    ) -> mpfig.Figure:
+        """
+        Distribution of actual session times for a single strategy.
+        Reference lines show the 3h minimum and 4h nominal target.
+        """
+        df = pd.DataFrame([self._stats_to_dict(r) for r in results])
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+        sns.histplot(data=df, x="avg_session_time_minutes", kde=True, ax=ax, color="mediumseagreen")
+        ax.axvline(_MIN_SESSION, color='crimson', linestyle='--', linewidth=1.5,
+                   label=f"Min viable ({_MIN_SESSION} min)")
+        ax.axvline(_NOM_SESSION, color='steelblue', linestyle='--', linewidth=1.5,
+                   label=f"Nominal ({_NOM_SESSION} min)")
+        ax.set_title(f"Session Duration Distribution - {strategy_name}")
+        ax.set_xlabel("Avg Actual Session Duration (min)")
+        ax.legend()
+
         plt.tight_layout()
         return fig
 
@@ -257,12 +305,12 @@ class Visualizer:
     ) -> mpfig.Figure:
         """Plot resource utilization density for a single strategy using Violins."""
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
-        
+
         # Melt DataFrame for seaborn violin plot
         melted = pd.melt(
-            df, 
+            df,
             value_vars=["nurse_utilization_percent", "machine_utilization_percent"],
-            var_name="Resource", 
+            var_name="Resource",
             value_name="Utilization (%)"
         )
         melted["Utilization (%)"] *= 100
@@ -270,12 +318,13 @@ class Visualizer:
             "nurse_utilization_percent": "Nurse",
             "machine_utilization_percent": "Machine"
         })
-        
+
         fig, ax = plt.subplots(figsize=(6, 6))
-        sns.violinplot(data=melted, x="Resource", y="Utilization (%)", ax=ax, palette="viridis", inner="quartile")
+        sns.violinplot(data=melted, x="Resource", y="Utilization (%)", hue="Resource",
+                       ax=ax, palette="viridis", inner="quartile", legend=False)
         ax.set_title(f"Resource Utilization Density - {strategy_name}")
         ax.set_ylim(0, 100)
-        
+
         plt.tight_layout()
         return fig
 
@@ -294,9 +343,11 @@ class Visualizer:
             "nurse_utilization_percent": "Nurse",
             "machine_utilization_percent": "Machine"
         })
-        
+
         fig, ax = plt.subplots(figsize=(10, 6))
-        sns.violinplot(data=melted, x="Resource", y="Utilization (%)", hue="strategy_name", split=True if len(df["strategy_name"].unique())==2 else False, ax=ax, inner="quartile")
+        split = len(df["strategy_name"].unique()) == 2
+        sns.violinplot(data=melted, x="Resource", y="Utilization (%)",
+                       hue="strategy_name", split=split, ax=ax, inner="quartile")
         ax.set_title("Resource Utilization Density Comparison")
         ax.set_ylim(0, 100)
         plt.tight_layout()
@@ -307,10 +358,11 @@ class Visualizer:
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         if strategy_name:
             df = df[df["strategy_name"] == strategy_name]
-            
+
         fig, ax = plt.subplots(figsize=(8, 6))
-        sns.ecdfplot(data=df, x="mean_wait_time_minutes", hue="strategy_name" if not strategy_name else None, ax=ax)
-        
+        sns.ecdfplot(data=df, x="mean_wait_time_minutes",
+                     hue="strategy_name" if not strategy_name else None, ax=ax)
+
         title = f"CDF of Mean Wait Time - {strategy_name}" if strategy_name else "CDF of Mean Wait Time Comparison"
         ax.set_title(title)
         ax.set_xlabel("Mean Wait Time (min)")
@@ -319,29 +371,52 @@ class Visualizer:
         plt.tight_layout()
         return fig
 
-    def plot_scatter_wait_vs_overrun(self, results: List[ShiftStatistics], strategy_name: str = None) -> mpfig.Figure:
-        """Scatter plot showing trade-off between Wait Time and Shift Overrun."""
+    def plot_scatter_wait_vs_session_time(
+        self,
+        results: List[ShiftStatistics],
+        strategy_name: str = None
+    ) -> mpfig.Figure:
+        """
+        Scatter plot: mean wait time vs. avg actual session duration.
+        Shows the trade-off between patient waiting and session completeness.
+        """
         df = pd.DataFrame([self._stats_to_dict(r) for r in results])
         if strategy_name:
             df = df[df["strategy_name"] == strategy_name]
-            
+
         fig, ax = plt.subplots(figsize=(8, 6))
         sns.scatterplot(
-            data=df, 
-            x="mean_wait_time_minutes", 
-            y="shift_overrun_minutes", 
+            data=df,
+            x="mean_wait_time_minutes",
+            y="avg_session_time_minutes",
             hue="strategy_name" if not strategy_name else None,
             alpha=0.7,
             ax=ax
         )
-        
-        title = f"Wait Time vs Shift Overrun - {strategy_name}" if strategy_name else "Wait Time vs Shift Overrun Comparison"
+
+        # Reference line for nominal session
+        ax.axhline(_NOM_SESSION, color='steelblue', linestyle='--', linewidth=1.2,
+                   label=f"Nominal session ({_NOM_SESSION} min)")
+        ax.axhline(_MIN_SESSION, color='crimson', linestyle='--', linewidth=1.2,
+                   label=f"Min viable ({_MIN_SESSION} min)")
+
+        title = f"Wait Time vs Session Duration - {strategy_name}" if strategy_name \
+            else "Wait Time vs Session Duration Comparison"
         ax.set_title(title)
         ax.set_xlabel("Mean Wait Time (min)")
-        ax.set_ylabel("Shift Overrun (min)")
+        ax.set_ylabel("Avg Actual Session Duration (min)")
         ax.grid(True, alpha=0.3)
+        ax.legend()
         plt.tight_layout()
         return fig
+
+    # Backward-compat alias used in the PDF reporter
+    def plot_scatter_wait_vs_overrun(
+        self,
+        results: List[ShiftStatistics],
+        strategy_name: str = None
+    ) -> mpfig.Figure:
+        return self.plot_scatter_wait_vs_session_time(results, strategy_name)
 
     @staticmethod
     def _stats_to_dict(stats: ShiftStatistics) -> dict:
@@ -352,6 +427,7 @@ class Visualizer:
             "max_wait_time_minutes": stats.max_wait_time_minutes,
             "nurse_utilization_percent": stats.nurse_utilization_percent,
             "machine_utilization_percent": stats.machine_utilization_percent,
-            "shift_overrun_minutes": stats.shift_overrun_minutes,
+            "avg_session_time_minutes": stats.avg_session_time_minutes,
+            "sessions_truncated_count": stats.sessions_truncated_count,
             "failed_patients_count": stats.failed_patients_count,
         }
