@@ -364,7 +364,7 @@ if run_clicked:
         f"Simulation completed: {len(results_df)} runs "
         f"({n_iterations} iter x {len(strategies)} strategies) + "
         f"{len(predefined_edge_cases)} predefined edge cases + "
-        f"{n_auto} auto-captured failure shift{'s' if n_auto != 1 else ''}"
+        f"{n_auto} auto-captured boundary shift{'s' if n_auto != 1 else ''}"
     )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -451,10 +451,10 @@ if "results" in st.session_state:
     n_auto = len(auto_edge_cases)
     if n_auto:
         st.info(
-            f"**{n_auto} auto-captured failure shift{'s' if n_auto != 1 else ''}** "
-            f"detected in the Monte Carlo run (any shift with ≥1 failed patient "
-            f"is preserved here for inspection).",
-            icon="⚠️"
+            f"**{n_auto} boundary shifts** automatically captured. "
+            f"The simulation tracks the absolute Best Case and Worst Case scenario for each strategy "
+            f"to highlight the extremes without overloading memory.",
+            icon="💡"
         )
 
     tab_labels = []
@@ -476,8 +476,8 @@ if "results" in st.session_state:
     if auto_edge_cases:
         with tabs[tab_idx]:
             st.caption(
-                "Each card below represents a Monte Carlo iteration where at least one "
-                "patient could not receive the minimum viable session duration."
+                "These cards represent the absolute Best Case (fewest failures/lowest wait) and Worst Case "
+                "(most failures/highest wait) boundary iterations for each strategy."
             )
             for name, (scenario, stats) in auto_edge_cases.items():
                 render_edge_case_card(name, scenario, stats)

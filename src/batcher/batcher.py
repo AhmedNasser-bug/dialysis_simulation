@@ -92,30 +92,63 @@ class MonteCarloBatcher:
             writer = csv.DictWriter(csv_file, fieldnames=field_names)
             writer.writeheader()
 
+        extremes = {
+            strat.name: {
+                'best_stat': None, 'best_scenario': None, 'best_all_stats': None,
+                'worst_stat': None, 'worst_scenario': None, 'worst_all_stats': None
+            }
+            for strat in self._strategies
+        }
+
         try:
             for i in range(self._n_iterations):
                 seed = self._global_seed + i
                 scenario = generate_shift_scenario(self._config, seed=seed)
 
+                iteration_stats = []
                 for strategy in self._strategies:
                     stats = strategy.process_shift(scenario)
+                    iteration_stats.append(stats)
                     
                     if writer:
                         writer.writerow(dataclasses.asdict(stats))
                     else:
                         results.append(stats)
 
-                    if stats.failed_patients_count > 0:
-                        label = f"Auto: seed-{seed} ({strategy.name})"
-                        if label not in discovered:
-                            discovered[label] = (scenario, [])
-                        discovered[label][1].append(stats)
+                for stats in iteration_stats:
+                    s_name = stats.strategy_name
+                    curr_worst = extremes[s_name]['worst_stat']
+                    
+                    # Update worst (most failures, or highest wait)
+                    if not curr_worst or \
+                       (stats.failed_patients_count > curr_worst.failed_patients_count) or \
+                       (stats.failed_patients_count == curr_worst.failed_patients_count and stats.mean_wait_time_minutes > curr_worst.mean_wait_time_minutes):
+                        extremes[s_name]['worst_stat'] = stats
+                        extremes[s_name]['worst_scenario'] = scenario
+                        extremes[s_name]['worst_all_stats'] = iteration_stats
+                        
+                    curr_best = extremes[s_name]['best_stat']
+                    
+                    # Update best (fewest failures, or lowest wait)
+                    if not curr_best or \
+                       (stats.failed_patients_count < curr_best.failed_patients_count) or \
+                       (stats.failed_patients_count == curr_best.failed_patients_count and stats.mean_wait_time_minutes < curr_best.mean_wait_time_minutes):
+                        extremes[s_name]['best_stat'] = stats
+                        extremes[s_name]['best_scenario'] = scenario
+                        extremes[s_name]['best_all_stats'] = iteration_stats
                 
                 if progress_callback:
                     progress_callback(i + 1, self._n_iterations)
         finally:
             if csv_file:
                 csv_file.close()
+
+        # Build discovered from extremes
+        for s_name, data in extremes.items():
+            if data['best_scenario']:
+                discovered[f"Auto: Best Case ({s_name})"] = (data['best_scenario'], data['best_all_stats'])
+            if data['worst_scenario']:
+                discovered[f"Auto: Worst Case ({s_name})"] = (data['worst_scenario'], data['worst_all_stats'])
 
         return results, discovered
 
