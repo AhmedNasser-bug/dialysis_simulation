@@ -137,6 +137,8 @@ def render_edge_case_card(
                 border = "#fc8181" if failed else "#68d391"
                 icon   = "❌ FAIL" if failed else "✅ PASS"
 
+                fail_rate = (stat.failed_patients_count / stat.total_patients_processed * 100) if stat.total_patients_processed else 0.0
+
                 st.markdown(
                     f"""
                     <div style="
@@ -149,7 +151,7 @@ def render_edge_case_card(
                                 <td style="padding:2px 8px 2px 0"><b>Patients processed</b></td>
                                 <td style="padding:2px 0">{stat.total_patients_processed}</td>
                                 <td style="padding:2px 8px 2px 16px"><b>Failed</b></td>
-                                <td style="padding:2px 0;color:{'#c53030' if failed else 'inherit'}">{stat.failed_patients_count}</td>
+                                <td style="padding:2px 0;color:{'#c53030' if failed else 'inherit'}">{stat.failed_patients_count} ({fail_rate:.1f}%)</td>
                             </tr>
                             <tr>
                                 <td style="padding:2px 8px 2px 0"><b>Avg session</b></td>
@@ -349,6 +351,9 @@ if run_clicked:
         # Merge: predefined first, then auto-discovered
         all_edge_cases = {**predefined_edge_cases, **auto_edge_cases}
 
+        if "figures" in st.session_state:
+            del st.session_state["figures"]
+
         st.session_state.update({
             "results":            results_df,
             "edge_cases":         all_edge_cases,
@@ -383,7 +388,8 @@ if "results" in st.session_state:
     st.subheader("Key Performance Indicators (Aggregated Averages)")
     
     viz = Visualizer()
-    df = viz._ensure_dataframe(results)
+    df = viz._ensure_dataframe(results).copy()
+    df["failure_rate_percent"] = (df["failed_patients_count"] / df["total_patients_processed"]) * 100
     means = df.groupby("strategy_name").mean(numeric_only=True)
 
     cols = st.columns(len(strategies))
@@ -399,6 +405,7 @@ if "results" in st.session_state:
                 st.metric("Avg Truncated Sessions", f"{d['sessions_truncated_count']:.1f}",
                           help="Sessions cut short by shift wall")
                 st.metric("Avg Failed Patients", f"{d['failed_patients_count']:.1f}")
+                st.metric("Failure Rate", f"{d['failure_rate_percent']:.2f}%")
                 st.metric("Nurse Utilization",   f"{d['nurse_utilization_percent']*100:.1f}%")
                 st.metric("Machine Utilization", f"{d['machine_utilization_percent']*100:.1f}%")
 
@@ -406,40 +413,64 @@ if "results" in st.session_state:
 
     st.subheader("Simulation Analytics")
 
+    if "figures" not in st.session_state:
+        st.session_state["figures"] = {}
+        prog = st.progress(0, text="Generating Wait Time Distribution...")
+        
+        st.session_state["figures"]["wait_dist"] = viz.plot_wait_distribution(results)
+        prog.progress(1/7, text="Generating Session Time Distribution...")
+        
+        st.session_state["figures"]["session_dist"] = viz.plot_session_time_distribution(results)
+        prog.progress(2/7, text="Generating Resource Utilization...")
+        
+        st.session_state["figures"]["util"] = viz.plot_utilization(results)
+        prog.progress(3/7, text="Generating Paired Difference...")
+        
+        if len(strategies) >= 2:
+            try:
+                st.session_state["figures"]["paired"] = viz.plot_paired_difference(results)
+            except ValueError:
+                pass
+        
+        prog.progress(4/7, text="Generating Wait Time Series...")
+        st.session_state["figures"]["iter_wait"] = viz.plot_metric_over_iterations(results, "mean_wait_time_minutes", "Mean Wait Time vs Iteration", "Wait Time (min)")
+        
+        prog.progress(5/7, text="Generating Max Wait Series...")
+        st.session_state["figures"]["iter_max"] = viz.plot_metric_over_iterations(results, "max_wait_time_minutes",  "Max Wait Time vs Iteration",  "Wait Time (min)")
+        
+        prog.progress(6/7, text="Generating Session Time Series...")
+        st.session_state["figures"]["iter_session"] = viz.plot_metric_over_iterations(results, "avg_session_time_minutes", "Avg Session Time vs Iteration", "Duration (min)")
+        
+        prog.progress(1.0, text="Visualizations ready!")
+        prog.empty()
+
+    figs = st.session_state["figures"]
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("#### Wait Time Distribution")
-        st.pyplot(viz.plot_wait_distribution(results))
+        st.pyplot(figs["wait_dist"])
 
         st.markdown("#### Session Time Distribution")
-        st.pyplot(viz.plot_session_time_distribution(results))
+        st.pyplot(figs["session_dist"])
 
     with col2:
         st.markdown("#### Resource Utilization")
-        st.pyplot(viz.plot_utilization(results))
+        st.pyplot(figs["util"])
 
-        if len(strategies) >= 2:
+        if len(strategies) >= 2 and "paired" in figs:
             st.markdown("#### Paired Difference (Mean Wait)")
-            try:
-                st.pyplot(viz.plot_paired_difference(results))
-            except ValueError as e:
-                st.warning(str(e))
+            st.pyplot(figs["paired"])
 
     st.divider()
     st.subheader("Time Series Analysis (Across Iterations)")
     col3, col4, col5 = st.columns(3)
     with col3:
-        st.pyplot(viz.plot_metric_over_iterations(
-            results, "mean_wait_time_minutes", "Mean Wait Time vs Iteration", "Wait Time (min)"
-        ))
+        st.pyplot(figs["iter_wait"])
     with col4:
-        st.pyplot(viz.plot_metric_over_iterations(
-            results, "max_wait_time_minutes",  "Max Wait Time vs Iteration",  "Wait Time (min)"
-        ))
+        st.pyplot(figs["iter_max"])
     with col5:
-        st.pyplot(viz.plot_metric_over_iterations(
-            results, "avg_session_time_minutes", "Avg Session Time vs Iteration", "Duration (min)"
-        ))
+        st.pyplot(figs["iter_session"])
 
     st.divider()
 

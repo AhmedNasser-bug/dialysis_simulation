@@ -504,10 +504,12 @@ class PDFReporter(FPDF):
                 self.set_font("Arial", "B" if failed else "", 8.5)
                 self.set_x(MARGIN_L)
 
+                fail_rate = (stat.failed_patients_count / stat.total_patients_processed * 100) if stat.total_patients_processed else 0.0
+
                 line1 = (
                     f"  {badge}  {stat.strategy_name}   |   "
                     f"Patients: {stat.total_patients_processed}   |   "
-                    f"Failed: {stat.failed_patients_count}   |   "
+                    f"Failed: {stat.failed_patients_count} ({fail_rate:.1f}%)   |   "
                     f"Truncated: {stat.sessions_truncated_count}"
                 )
                 self.cell(BODY_W, 7, line1, ln=1, fill=True)
