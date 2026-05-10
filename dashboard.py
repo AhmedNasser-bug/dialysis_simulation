@@ -382,8 +382,8 @@ if "results" in st.session_state:
     # ── KPI Cards ─────────────────────────────────────────────────────────
     st.subheader("Key Performance Indicators (Aggregated Averages)")
     
-    # results is already a DataFrame
-    df = results
+    viz = Visualizer()
+    df = viz._ensure_dataframe(results)
     means = df.groupby("strategy_name").mean(numeric_only=True)
 
     cols = st.columns(len(strategies))
@@ -404,9 +404,7 @@ if "results" in st.session_state:
 
     st.divider()
 
-    # ── Charts ────────────────────────────────────────────────────────────
     st.subheader("Simulation Analytics")
-    viz = Visualizer()
 
     col1, col2 = st.columns(2)
     with col1:
