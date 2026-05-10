@@ -1,6 +1,12 @@
 # Dependencies
 __pycache__/
 
+# Local preset configs (device-specific, not committed)
+presets/
+
+# Test PDF outputs
+outputs/test_*.pdf
+
 # Compiled Python files
 *.pyc
 *.pyo
